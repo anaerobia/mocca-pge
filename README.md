@@ -4,8 +4,13 @@ MAAP DPS algorithm for the AIRS L2 MOCCA PGE (SPSS v02.95.00). MOCCA
 aggregates MODIS MYD03 and MYD06 cloud fields onto the AIRS L1B footprints.
 
 The PGE, its Python environment and its static files are in the container
-image `anaerobia/mocca:v295`. This repository has only the MAAP run and
-build commands.
+image `anaerobia/mocca:v295`. This repository has the MAAP run and build
+commands, and a Dockerfile that adds this repository to that image at
+`/app/mocca-pge`. MAAP uses the result, `anaerobia/mocca:v295-maap`.
+
+```bash
+docker buildx build --platform linux/amd64 -t anaerobia/mocca:v295-maap --push .
+```
 
 ## MAAP registration
 
@@ -14,7 +19,7 @@ build commands.
 | Repository URL | `https://github.com/anaerobia/mocca-pge` |
 | Run Command | `mocca-pge/run_mocca.sh` |
 | Build Command | `mocca-pge/build-env.sh` |
-| Container | `anaerobia/mocca:v295` |
+| Container | `docker.io/anaerobia/mocca:v295-maap` |
 
 ## Inputs
 
