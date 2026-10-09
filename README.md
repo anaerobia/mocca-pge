@@ -21,6 +21,19 @@ docker buildx build --platform linux/amd64 -t anaerobia/mocca:v295-maap --push .
 | Build Command | `mocca-pge/build-env.sh` |
 | Container | `docker.io/anaerobia/mocca:v295-maap` |
 
+To register with optional inputs (`Directory?`), send `algorithm.json` to
+the MAAP build API from a MAAP Jupyter notebook:
+
+```python
+import json, requests
+from maap.maap import MAAP
+maap = MAAP()
+r = requests.post(maap.config.maap_api_root + "build",
+                  headers=maap._get_api_header(content_type="application/json"),
+                  data=open("algorithm.json").read())
+print(r.status_code, r.text)
+```
+
 ## Inputs
 
 All inputs are strings.

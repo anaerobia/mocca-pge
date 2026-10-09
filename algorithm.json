@@ -1,0 +1,28 @@
+{
+  "algorithm_name": "mocca-v295",
+  "algorithm_version": "main",
+  "algorithm_description": "AIRS L2 MOCCA PGE (SPSS v02.95.00): aggregates MODIS MYD03/MYD06 cloud fields onto AIRS L1B footprints",
+  "keywords": "airs, modis, mocca, sounder",
+  "code_repository": "https://github.com/anaerobia/mocca-pge",
+  "author": "ali",
+  "run_command": "mocca-pge/run_mocca.sh",
+  "build_command": "mocca-pge/build-env.sh",
+  "algorithm_container_url": "docker.io/anaerobia/mocca:v295-maap",
+  "ram_min": 8,
+  "cores_min": 8,
+  "outdir_max": 20,
+  "inputs": [
+    {"name": "config_file",    "label": "config_file",    "doc": "MOCCA PGE config (XML)",              "type": "File"},
+    {"name": "log_filename",   "label": "log_filename",   "doc": "Log file name, written to ./output",  "type": "string"},
+    {"name": "l1b_file",       "label": "l1b_file",       "doc": "AIRS L1B granule (STAC item)",        "type": "Directory"},
+    {"name": "modis03_file_1", "label": "modis03_file_1", "doc": "MODIS MYD03 granule 1 (STAC item)",   "type": "Directory"},
+    {"name": "modis03_file_2", "label": "modis03_file_2", "doc": "MODIS MYD03 granule 2 (STAC item)",   "type": "Directory"},
+    {"name": "modis03_file_3", "label": "modis03_file_3", "doc": "Optional MODIS MYD03 granule 3",      "type": "Directory?"},
+    {"name": "modis06_file_1", "label": "modis06_file_1", "doc": "MODIS MYD06_L2 granule 1 (STAC item)", "type": "Directory"},
+    {"name": "modis06_file_2", "label": "modis06_file_2", "doc": "MODIS MYD06_L2 granule 2 (STAC item)", "type": "Directory"},
+    {"name": "modis06_file_3", "label": "modis06_file_3", "doc": "Optional MODIS MYD06_L2 granule 3",   "type": "Directory?"}
+  ],
+  "outputs": [
+    {"name": "out", "type": "Directory"}
+  ]
+}
