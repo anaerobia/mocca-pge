@@ -8,8 +8,9 @@
 #
 # Usage:
 #   run_mocca.sh --config_file <f> --l1b_file <f> \
-#                --modis03_file_1 <f> --modis03_file_2 <f> [--modis03_file_3 <f>] \
-#                --modis06_file_1 <f> --modis06_file_2 <f> [--modis06_file_3 <f>] \
+#                --modis03_file_1 <f> --modis03_file_2 <f> \
+#                --modis06_file_1 <f> --modis06_file_2 <f> \
+#                # --modis03_file_3 <f> --modis06_file_3 <f>  (disabled, see README)
 #                [--log_filename <f>]
 #
 # The product, the .cas file and the log go in ./output.

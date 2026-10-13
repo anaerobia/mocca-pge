@@ -21,8 +21,8 @@ docker buildx build --platform linux/amd64 -t anaerobia/mocca:v295-maap --push .
 | Build Command | `mocca-pge/build-env.sh` |
 | Container | `docker.io/anaerobia/mocca:v295-maap` |
 
-To register with optional inputs (`Directory?`), send `algorithm.json` to
-the MAAP build API from a MAAP Jupyter notebook:
+To register, send `algorithm.json` to the MAAP build API from a MAAP
+Jupyter notebook:
 
 ```python
 import json, requests
@@ -43,16 +43,24 @@ All inputs are strings.
 | `config_file` | yes | MOCCA PGE config (XML) |
 | `l1b_file` | yes | AIRS L1B radiance granule (HDF) |
 | `modis03_file_1`, `modis03_file_2` | yes | MODIS MYD03 geolocation granules |
-| `modis03_file_3` | no | Third MYD03 granule |
 | `modis06_file_1`, `modis06_file_2` | yes | MODIS MYD06_L2 cloud granules |
+<!--
+| `modis03_file_3` | no | Third MYD03 granule |
 | `modis06_file_3` | no | Third MYD06_L2 granule |
+-->
+
+The third MODIS granule (`modis03_file_3`, `modis06_file_3`) is disabled.
+As an optional STAC input it must have the type `Directory?`. MAAP DPS
+registers that type, but the DPS input stager fails when the input has no
+value (`Invalid URL 'None'`). Until MAAP fixes this, the algorithm takes
+exactly two granules of each type, and `run_mocca.sh` ignores a third one.
 | `log_filename` | no | Log file name. A relative name goes in `./output`. |
 
 The script copies the config and sets these fields in the copy:
 
 - `AirsL1bFile`: the `l1b_file` path.
-- `Modis03Files`: the `modis03_file_N` paths, one `<element>` each.
-- `Modis06L2Files`: the `modis06_file_N` paths, one `<element>` each.
+- `Modis03Files`: the `modis03_file_1` and `modis03_file_2` paths.
+- `Modis06L2Files`: the `modis06_file_1` and `modis06_file_2` paths.
 - `SFIFFilename`: the SFIF in the image.
 - `ProductionDateTime`: the current UTC time (`yymmddHHMMSS`).
 
