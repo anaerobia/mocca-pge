@@ -1,15 +1,22 @@
 # mocca-pge
 
-MAAP DPS algorithm for the AIRS L2 MOCCA PGE (SPSS v02.95.00). MOCCA
+MAAP DPS algorithm for the AIRS L2 MOCCA PGE (SPSS v02.96.00, and
+v02.95.00). MOCCA
 aggregates MODIS MYD03 and MYD06 cloud fields onto the AIRS L1B footprints.
 
 The PGE, its Python environment and its static files are in the container
-image `anaerobia/mocca:v295`. This repository has the MAAP run and build
+image `anaerobia/mocca:<tag>`. This repository has the MAAP run and build
 commands, and a Dockerfile that adds this repository to that image at
-`/app/mocca-pge`. MAAP uses the result, `anaerobia/mocca:v295-maap`.
+`/app/mocca-pge`. MAAP uses the result, `anaerobia/mocca:<tag>-maap`.
+
+| SPSS | Base image | MAAP image | Registration | MAAP process |
+|---|---|---|---|---|
+| v02.96.00 | `anaerobia/mocca:v296` | `anaerobia/mocca:v296-maap` | `algorithm.json` (`mocca-v296`) | |
+| v02.95.00 | `anaerobia/mocca:v295` | `anaerobia/mocca:v295-maap` | `algorithm-v295.json` (`mocca-v295`) | 164 |
 
 ```bash
-docker buildx build --platform linux/amd64 -t anaerobia/mocca:v295-maap --push .
+docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=v296 \
+    -t anaerobia/mocca:v296-maap --push .
 ```
 
 ## MAAP registration
@@ -19,7 +26,7 @@ docker buildx build --platform linux/amd64 -t anaerobia/mocca:v295-maap --push .
 | Repository URL | `https://github.com/anaerobia/mocca-pge` |
 | Run Command | `mocca-pge/run_mocca.sh` |
 | Build Command | `mocca-pge/build-env.sh` |
-| Container | `docker.io/anaerobia/mocca:v295-maap` |
+| Container | `docker.io/anaerobia/mocca:v296-maap` (v295: `...:v295-maap`) |
 
 To register, send `algorithm.json` to the MAAP build API from a MAAP
 Jupyter notebook:
@@ -75,4 +82,4 @@ metadata file and the log.
 ## Source
 
 The PGE source and the container build files are in the SIPS repository
-`SIPS/MOCCA-v295` (`src/sips_pge/l2_mocca/docker`).
+`SIPS/MOCCA-v296` and `SIPS/MOCCA-v295` (`src/sips_pge/l2_mocca/docker`).
