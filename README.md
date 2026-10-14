@@ -11,7 +11,7 @@ commands, and a Dockerfile that adds this repository to that image at
 
 | SPSS | Base image | MAAP image | Registration | MAAP process |
 |---|---|---|---|---|
-| v02.96.00 | `anaerobia/mocca:v296` | `anaerobia/mocca:v296-maap` | `algorithm.json` (`mocca-v296`) | |
+| v02.96.00 | `anaerobia/mocca:v296` | `anaerobia/mocca:v296-maap` | `algorithm.json` (`mocca-v296`) | 197 |
 | v02.95.00 | `anaerobia/mocca:v295` | `anaerobia/mocca:v295-maap` | `algorithm-v295.json` (`mocca-v295`) | 164 |
 
 ```bash
