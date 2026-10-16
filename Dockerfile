@@ -4,12 +4,12 @@
 # the run command /app/mocca-pge/run_mocca.sh, so this image adds the
 # repository at that path.
 #
-#   docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=v296 \
-#       -t anaerobia/mocca:v296-maap --push .
+#   docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=v29601 \
+#       -t anaerobia/mocca:v29601-maap --push .
 #
-# MOCCA_TAG selects the base image: v295 (SPSS v02.95.00) or v296
-# (SPSS v02.96.00).
-ARG MOCCA_TAG=v296
+# MOCCA_TAG selects the base image: v295 (SPSS v02.95.00), v296
+# (SPSS v02.96.00) or v29601 (SPSS v02.96.01).
+ARG MOCCA_TAG=v29601
 FROM docker.io/anaerobia/mocca:${MOCCA_TAG}
 
 COPY . /app/mocca-pge/
