@@ -12,6 +12,16 @@
 #                --modis06_file_1 <f> --modis06_file_2 <f> [--modis06_file_3 <f>] \
 #                [--log_filename <f>]
 #
-# The product, the .cas file and the log go in ./output.
+# The product, the .cas file and the log go in ./output. After a successful
+# run, make_stac.py writes a STAC catalog and item for the product there.
 #
-exec /usr/local/bin/run_mocca.sh "$@"
+/usr/local/bin/run_mocca.sh "$@"
+rc=$?
+if [ $rc -ne 0 ]; then
+    exit $rc
+fi
+
+python3 "$(dirname "$0")/make_stac.py" output || {
+    echo "run_mocca.sh: STAC metadata generation failed" >&2
+    exit 1
+}

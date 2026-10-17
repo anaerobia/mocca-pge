@@ -78,7 +78,26 @@ file in it. An empty input (`""`) is the same as no input.
 ## Outputs
 
 `./output` contains the product `SNDR.AQUA.MOCCA.101.nc`, its `.cas`
-metadata file and the log.
+metadata file, the log, and the STAC metadata:
+
+```
+output/catalog.json
+output/<ProductName without .nc>/<ProductName without .nc>.json   # STAC Item
+```
+
+`make_stac.py` writes the STAC files after a successful PGE run. It reads
+the start and end times, the product name, `BuildId`, `ProcessingLevel` and
+the granule fields from the `.cas` file. The `.cas` file has no bounding
+coordinates, so the footprint comes from the latitude and longitude
+variables in the NetCDF product (read with `h5py`). Granules that cross the
+antimeridian get a MultiPolygon. Internal keys such as `FileLocation`,
+`NodeInfo` and `JobId` are not copied into the STAC Item.
+
+To see every key in a `.cas` file:
+
+```bash
+python3 make_stac.py --dump output
+```
 
 ## Source
 
