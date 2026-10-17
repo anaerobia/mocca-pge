@@ -74,35 +74,48 @@ def read_cas(path):
     return met
 
 
+def clean(v):
+    """Turn a NetCDF/HDF5 attribute value into a plain Python value.
+    numpy arrays and scalars become lists or numbers, bytes become str,
+    one-element lists become their element, and empty values become None."""
+    if hasattr(v, "tolist"):             # numpy array or numpy scalar
+        v = v.tolist()
+    if isinstance(v, bytes):
+        v = v.decode(errors="replace")
+    if isinstance(v, list):
+        v = [x.decode(errors="replace") if isinstance(x, bytes) else x
+             for x in v]
+        if len(v) == 0:
+            return None
+        if len(v) == 1:
+            return v[0]
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
 def read_nc_attrs(path):
-    """Return the NetCDF global attributes, or {} if no reader is installed."""
+    """Return the NetCDF global attributes as plain Python values,
+    or {} if no reader is installed."""
     try:
         import netCDF4
         with netCDF4.Dataset(path) as ds:
-            return {k: ds.getncattr(k) for k in ds.ncattrs()}
+            return {k: clean(ds.getncattr(k)) for k in ds.ncattrs()}
     except ImportError:
         pass
     try:
         import h5py
         with h5py.File(path, "r") as f:
-            out = {}
-            for k, v in f.attrs.items():
-                if isinstance(v, bytes):
-                    v = v.decode()
-                elif hasattr(v, "tolist"):
-                    v = v.tolist()
-                    if isinstance(v, list) and len(v) == 1:
-                        v = v[0]
-                out[k] = v
-            return out
+            return {k: clean(v) for k, v in f.attrs.items()}
     except ImportError:
         return {}
 
 
 def first(meta, keys, name, required=True):
     for k in keys:
-        v = meta.get(k)
-        if v not in (None, "", []):
+        v = clean(meta.get(k))
+        if v is not None:
             return v[0] if isinstance(v, list) else v
     if required:
         raise SystemExit(f"make_stac: no value for {name}; tried {keys}. "
@@ -122,29 +135,49 @@ def to_iso(value):
 
 def read_latlon(path):
     """Return (lats, lons) as flat lists of valid values from the NetCDF file,
-    or (None, None) if no reader or no lat/lon variables are found."""
-    try:
-        import h5py
-    except ImportError:
-        h5py = None
-    if h5py is None:
-        return None, None
+    or (None, None) if no reader or no lat/lon variables are found.
+    Uses h5py if installed, otherwise netCDF4."""
+    lat_names = [n.lower() for n in LAT_NAMES]
+    lon_names = [n.lower() for n in LON_NAMES]
     found = {}
 
-    def visit(name, obj):
-        if not isinstance(obj, h5py.Dataset):
-            return
-        base = name.rsplit("/", 1)[-1].lower()
-        for kind, names in (("lat", LAT_NAMES), ("lon", LON_NAMES)):
-            if kind not in found and base in [n.lower() for n in names]:
-                found[kind] = obj[()].ravel().tolist()
+    def take(base, read):
+        base = base.lower()
+        for kind, names in (("lat", lat_names), ("lon", lon_names)):
+            if kind not in found and base in names:
+                found[kind] = read()
 
-    with h5py.File(path, "r") as f:     # NetCDF-4 files are HDF5 files
-        f.visititems(visit)
+    try:
+        import h5py
+
+        def visit(name, obj):
+            if isinstance(obj, h5py.Dataset):
+                take(name.rsplit("/", 1)[-1],
+                     lambda: obj[()].ravel().tolist())
+
+        with h5py.File(path, "r") as f:   # NetCDF-4 files are HDF5 files
+            f.visititems(visit)
+    except ImportError:
+        try:
+            import netCDF4
+        except ImportError:
+            return None, None
+
+        def walk(group):
+            for vname, var in group.variables.items():
+                take(vname, lambda: var[:].filled(float("nan")).ravel().tolist()
+                     if hasattr(var[:], "filled") else var[:].ravel().tolist())
+            for sub in group.groups.values():
+                walk(sub)
+
+        with netCDF4.Dataset(path) as ds:
+            walk(ds)
+
     if "lat" not in found or "lon" not in found:
         return None, None
+    # The range test drops fill values and NaN (NaN fails every comparison).
     pairs = [(y, x) for y, x in zip(found["lat"], found["lon"])
-             if -90 <= y <= 90 and -180 <= x <= 180]   # drops fill values
+             if -90 <= y <= 90 and -180 <= x <= 180]
     if not pairs:
         return None, None
     return [p[0] for p in pairs], [p[1] for p in pairs]
@@ -218,8 +251,9 @@ def build_item(out_dir):
     if version:
         props["processing:software"] = {"MOCCA_PGE": str(version)}
     for k in EXTRA_KEYS:
-        if meta.get(k) not in (None, "", []):
-            props[f"mocca:{k}"] = meta[k]
+        v = clean(meta.get(k))
+        if v is not None:
+            props[f"mocca:{k}"] = v
 
     # Asset hrefs are relative to the item file, so they stay valid
     # after DPS copies the output directory to S3.
