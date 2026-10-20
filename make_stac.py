@@ -15,7 +15,7 @@ the NetCDF fallback when it is installed.
 
 Usage:
     make_stac.py [output_dir]          # default: ./output
-    make_stac.py --dump [output_dir]   # print every .cas key and value
+    make_stac.py --dump [output_dir]   # print every .cas key and NetCDF attribute
 
 Edit the *_KEYS lists below to match the key names in the real .cas file.
 Each list is tried in order; the first key that has a value wins.
@@ -27,7 +27,10 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-COLLECTION = "MOCCA"
+# The collection ID is the product's short name, read from the NetCDF
+# global attributes (SHORTNAME_KEYS). Set MOCCA_COLLECTION in the
+# environment to override it.
+STAC_API = "https://stac.maap-project.org"
 STAC_VERSION = "1.0.0"
 
 # .cas key names (first match wins), then NetCDF global attribute names.
@@ -49,6 +52,7 @@ LON_NAMES = ["longitude", "lon", "Longitude"]
 # Copied into item properties as "mocca:<key>" when present. Internal keys
 # (FileLocation, NodeInfo, JobId, TaskId, RequestId) are left out on
 # purpose: they name internal hosts and paths.
+SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 EXTRA_KEYS = ["GranuleNumber", "NominalDate", "ProductType", "DataVersion",
               "CollectionLabel", "AutomaticQualityFlag",
               "ProductionDateTime", "ProductionLocation"]
@@ -270,21 +274,38 @@ def build_item(out_dir):
         assets["log"] = {"href": f"../{os.path.basename(log)}",
                          "type": "text/plain", "roles": ["metadata"]}
 
-    return {
+    collection = (os.environ.get("MOCCA_COLLECTION")
+                  or first(meta, SHORTNAME_KEYS, "short name", required=False))
+    links = [{"rel": "root", "href": "../catalog.json",
+              "type": "application/json"},
+             {"rel": "parent", "href": "../catalog.json",
+              "type": "application/json"}]
+    if collection:
+        links.append({"rel": "collection",
+                      "href": f"{STAC_API}/collections/{collection}",
+                      "type": "application/json"})
+    else:
+        print("make_stac: warning: no short name found "
+              f"(tried {SHORTNAME_KEYS}); the item has no collection. "
+              "Run with --dump to see the NetCDF attributes.",
+              file=sys.stderr)
+
+    item = {
         "type": "Feature",
         "stac_version": STAC_VERSION,
         "stac_extensions": [
             "https://stac-extensions.github.io/processing/v1.2.0/schema.json"],
         "id": item_id,
+        "collection": collection,
         "geometry": geom,
         "bbox": bbox,
         "properties": props,
         "assets": assets,
-        "links": [{"rel": "root", "href": "../catalog.json",
-                   "type": "application/json"},
-                  {"rel": "parent", "href": "../catalog.json",
-                   "type": "application/json"}],
+        "links": links,
     }
+    if not collection:
+        del item["collection"]
+    return item
 
 
 def main(argv):
@@ -296,6 +317,10 @@ def main(argv):
         for cas in glob.glob(os.path.join(out_dir, "*.cas")):
             print(f"# {cas}")
             for k, v in read_cas(cas).items():
+                print(f"{k} = {v}")
+        for nc in glob.glob(os.path.join(out_dir, "*.nc")):
+            print(f"# {nc} (global attributes)")
+            for k, v in read_nc_attrs(nc).items():
                 print(f"{k} = {v}")
         return
 
@@ -309,7 +334,7 @@ def main(argv):
     catalog = {
         "type": "Catalog",
         "stac_version": STAC_VERSION,
-        "id": f"{COLLECTION}-{item['id']}",
+        "id": f"{item.get('collection', 'MOCCA')}-{item['id']}",
         "description": "MOCCA product from a MAAP DPS job",
         "links": [{"rel": "root", "href": "./catalog.json",
                    "type": "application/json"},

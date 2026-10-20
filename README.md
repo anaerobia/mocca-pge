@@ -93,7 +93,13 @@ variables in the NetCDF product (read with `h5py`). Granules that cross the
 antimeridian get a MultiPolygon. Internal keys such as `FileLocation`,
 `NodeInfo` and `JobId` are not copied into the STAC Item.
 
-To see every key in a `.cas` file:
+The STAC collection ID is the product's short name, read from the NetCDF
+global attribute `shortname` (or `ShortName`, `short_name`). It is the same
+short name the product will have in CMR. Set `MOCCA_COLLECTION` to use a
+different ID. If no short name is found, the item has no collection and the
+script prints a warning.
+
+To see every key in the `.cas` file and every NetCDF global attribute:
 
 ```bash
 python3 make_stac.py --dump output
