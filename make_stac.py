@@ -15,6 +15,7 @@ the NetCDF fallback when it is installed.
 
 Usage:
     make_stac.py [output_dir]          # default: ./output
+    make_stac.py --asset-base=s3://<bucket>/<prefix> [output_dir]
     make_stac.py --dump [output_dir]   # print every .cas key and NetCDF attribute
 
 Edit the *_KEYS lists below to match the key names in the real .cas file.
@@ -31,6 +32,12 @@ from datetime import datetime, timezone
 # global attributes (SHORTNAME_KEYS). Set MOCCA_COLLECTION in the
 # environment to override it.
 STAC_API = "https://stac.maap-project.org"
+
+# Where the product files are archived, e.g. s3://<bucket>/<prefix>.
+# MAAP requires absolute asset hrefs, so set this with --asset-base or the
+# MOCCA_ASSET_BASE environment variable. Without it, hrefs are relative
+# to the item file and the script prints a warning.
+ASSET_BASE_ENV = "MOCCA_ASSET_BASE"
 STAC_VERSION = "1.0.0"
 
 # .cas key names (first match wins), then NetCDF global attribute names.
@@ -213,7 +220,7 @@ def footprint(w, s, e, n):
                           "coordinates": [[left], [right]]}
 
 
-def build_item(out_dir):
+def build_item(out_dir, asset_base=None):
     ncs = sorted(glob.glob(os.path.join(out_dir, "*.nc")))
     if not ncs:
         raise SystemExit(f"make_stac: no .nc product in {out_dir}")
@@ -251,6 +258,10 @@ def build_item(out_dir):
         "processing:level": first(meta, LEVEL_KEYS, "level",
                                   required=False) or "L2",
     }
+    produced = first(meta, ["ProductionDateTime", "date_created"],
+                     "production time", required=False)
+    if produced:
+        props["created_datetime"] = to_iso(produced)
     version = first(meta, VERSION_KEYS, "version", required=False)
     if version:
         props["processing:software"] = {"MOCCA_PGE": str(version)}
@@ -259,19 +270,25 @@ def build_item(out_dir):
         if v is not None:
             props[f"mocca:{k}"] = v
 
-    # Asset hrefs are relative to the item file, so they stay valid
-    # after DPS copies the output directory to S3.
-    assets = {"data": {"href": f"../{os.path.basename(nc)}",
+    def href(path):
+        name = os.path.basename(path)
+        return f"{asset_base.rstrip('/')}/{name}" if asset_base else f"../{name}"
+
+    if not asset_base:
+        print(f"make_stac: warning: no asset base set ({ASSET_BASE_ENV} or "
+              "--asset-base); asset hrefs are relative. MAAP needs absolute "
+              "s3:// hrefs.", file=sys.stderr)
+    assets = {"data": {"href": href(nc),
                        "type": "application/x-netcdf",
                        "title": "MOCCA product",
                        "roles": ["data"]}}
     if cas:
-        assets["metadata"] = {"href": f"../{os.path.basename(cas)}",
+        assets["metadata"] = {"href": href(cas),
                               "type": "application/xml",
                               "title": "OODT CAS metadata",
                               "roles": ["metadata"]}
     for log in glob.glob(os.path.join(out_dir, "*.log")):
-        assets["log"] = {"href": f"../{os.path.basename(log)}",
+        assets["log"] = {"href": href(log),
                          "type": "text/plain", "roles": ["metadata"]}
 
     collection = (os.environ.get("MOCCA_COLLECTION")
@@ -310,7 +327,15 @@ def build_item(out_dir):
 
 def main(argv):
     dump = "--dump" in argv
-    args = [a for a in argv if a != "--dump"]
+    asset_base = os.environ.get(ASSET_BASE_ENV)
+    args = []
+    for a in argv:
+        if a == "--dump":
+            continue
+        if a.startswith("--asset-base="):
+            asset_base = a.split("=", 1)[1]
+        else:
+            args.append(a)
     out_dir = args[0] if args else "output"
 
     if dump:
@@ -324,7 +349,7 @@ def main(argv):
                 print(f"{k} = {v}")
         return
 
-    item = build_item(out_dir)
+    item = build_item(out_dir, asset_base)
     item_dir = os.path.join(out_dir, item["id"])
     os.makedirs(item_dir, exist_ok=True)
     item_path = os.path.join(item_dir, item["id"] + ".json")

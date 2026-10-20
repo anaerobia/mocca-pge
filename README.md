@@ -99,6 +99,18 @@ short name the product will have in CMR. Set `MOCCA_COLLECTION` to use a
 different ID. If no short name is found, the item has no collection and the
 script prints a warning.
 
+MAAP requires absolute asset hrefs. Give the archive location of the
+product files with `--asset-base` or the `MOCCA_ASSET_BASE` environment
+variable; each asset href is that location plus the file name:
+
+```bash
+python3 make_stac.py --asset-base=s3://<bucket>/<prefix> output
+```
+
+Without it, the hrefs are relative to the item file and the script prints a
+warning. `created_datetime` comes from `ProductionDateTime` in the `.cas`
+file.
+
 To see every key in the `.cas` file and every NetCDF global attribute:
 
 ```bash
