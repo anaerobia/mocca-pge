@@ -15,7 +15,7 @@ the NetCDF fallback when it is installed.
 
 Usage:
     make_stac.py [output_dir]          # default: ./output
-    make_stac.py --asset-base=s3://<bucket>/<prefix> [output_dir]
+    make_stac.py --asset-base s3://<bucket>/<prefix> [output_dir]
     make_stac.py --dump [output_dir]   # print every .cas key and NetCDF attribute
 
 Edit the *_KEYS lists below to match the key names in the real .cas file.
@@ -329,11 +329,19 @@ def main(argv):
     dump = "--dump" in argv
     asset_base = os.environ.get(ASSET_BASE_ENV)
     args = []
-    for a in argv:
+    rest = list(argv)
+    while rest:
+        a = rest.pop(0)
         if a == "--dump":
             continue
         if a.startswith("--asset-base="):
             asset_base = a.split("=", 1)[1]
+        elif a == "--asset-base":
+            if not rest:
+                raise SystemExit("make_stac: --asset-base needs a value")
+            asset_base = rest.pop(0)
+        elif a.startswith("--"):
+            raise SystemExit(f"make_stac: unknown option {a}")
         else:
             args.append(a)
     out_dir = args[0] if args else "output"
@@ -369,6 +377,7 @@ def main(argv):
     with open(os.path.join(out_dir, "catalog.json"), "w") as f:
         json.dump(catalog, f, indent=2)
     print(f"make_stac: wrote {item_path} and {out_dir}/catalog.json")
+    print(f"make_stac: asset base: {asset_base or '(none, relative hrefs)'}")
 
 
 if __name__ == "__main__":
