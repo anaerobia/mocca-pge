@@ -124,6 +124,12 @@ Without it, the hrefs are relative to the item file and the script prints a
 warning. `created_datetime` comes from `ProductionDateTime` in the `.cas`
 file.
 
+When the DPS job context is in the folder (`<dataset>.context.json`, which
+DPS uploads with the outputs, or `../_context.json` inside a running job),
+the item also gets a `derived_from` link to the STAC item of each input
+granule (L1B, MYD03, MYD06) and `mocca:container_image`, the PGE image the
+job ran. The config file input is not linked, because it is an internal path.
+
 To see every key in the `.cas` file and every NetCDF global attribute:
 
 ```bash

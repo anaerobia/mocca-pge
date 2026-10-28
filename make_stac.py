@@ -463,6 +463,29 @@ def normalize_s3(uri):
     return uri
 
 
+def read_context(out_dir):
+    """Return the HySDS job context (dict) for a DPS output folder, or {}.
+    After a job, DPS uploads it as <dataset>.context.json next to the
+    outputs; inside a running job it is ../_context.json."""
+    paths = sorted(glob.glob(os.path.join(out_dir, "*.context.json")))
+    paths.append(os.path.join(out_dir, "..", "_context.json"))
+    for path in paths:
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                pass
+    return {}
+
+
+def derived_from(context):
+    """STAC Item URLs of the job's inputs, from the context's provenance."""
+    urls = [u[4:] if u.startswith("url:") else u
+            for u in (context.get("_prov") or {}).get("wasDerivedFrom") or []]
+    return [u for u in urls if u.startswith(("http://", "https://"))]
+
+
 def build_item(out_dir, asset_base=None):
     """Assemble the STAC Item for the product found in out_dir.
 
@@ -559,12 +582,22 @@ def build_item(out_dir, asset_base=None):
         assets["log"] = {"href": href(log),
                          "type": "text/plain", "roles": ["metadata"]}
 
+    context = read_context(out_dir)
+    images = [d.get("container_image_name") for d in
+              (context.get("job_specification") or {}).get("dependency_images") or []
+              if d.get("container_image_name")]
+    if images:
+        props["mocca:container_image"] = images[0]
+
     collection = (os.environ.get("MOCCA_COLLECTION")
                   or first(meta, SHORTNAME_KEYS, "short name", required=False))
     links = [{"rel": "root", "href": "../catalog.json",
               "type": "application/json"},
              {"rel": "parent", "href": "../catalog.json",
               "type": "application/json"}]
+    for url in derived_from(context):
+        links.append({"rel": "derived_from", "href": url,
+                      "type": "application/geo+json"})
     if collection:
         links.append({"rel": "collection",
                       "href": f"{STAC_API}/collections/{collection}",
