@@ -452,6 +452,17 @@ def footprint(w, s, e, n):
                           "coordinates": [[left], [right]]}
 
 
+def normalize_s3(uri):
+    """Turn the DPS job-result form s3://<host>[:port]/<bucket>/<key> into the
+    standard s3://<bucket>/<key>. Other values are returned unchanged."""
+    if not uri or not uri.startswith("s3://"):
+        return uri
+    first_part, _, rest = uri[5:].partition("/")
+    if rest and (":" in first_part or first_part.endswith("amazonaws.com")):
+        return "s3://" + rest
+    return uri
+
+
 def build_item(out_dir, asset_base=None):
     """Assemble the STAC Item for the product found in out_dir.
 
@@ -626,6 +637,11 @@ def main(argv):
         else:
             args.append(a)
     out_dir = args[0] if args else "output"
+    asset_base = normalize_s3(asset_base)
+    if out_dir.startswith(("s3://", "http://", "https://")):
+        raise SystemExit("make_stac: the directory must be a local path (for "
+                         "example my-private-bucket/dps_output/...), not a URL. "
+                         "Give the S3 location with --asset-base.")
 
     if dump:
         for cas in glob.glob(os.path.join(out_dir, "*.cas")):
