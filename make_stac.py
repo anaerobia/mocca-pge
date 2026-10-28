@@ -2,10 +2,10 @@
 """
 make_stac.py -- write STAC metadata for the MOCCA product.
 
-The MOCCA PGE writes the product (SNDR.AQUA.MOCCA.101.nc) and an OODT CAS
-metadata file (.cas, XML) to ./output. This script reads the .cas file,
-fills any missing values from the NetCDF global attributes (ACDD names),
-and writes a STAC Item and a STAC Catalog that points to it:
+The MOCCA PGE writes the product and an OODT CAS metadata file (.cas, XML)
+to ./output. This script reads the .cas file, fills any missing values from
+the NetCDF global attributes (ACDD names), and writes a STAC Item and a
+STAC Catalog that points to it:
 
     output/catalog.json
     output/<item id>/<item id>.json
@@ -16,10 +16,157 @@ the NetCDF fallback when it is installed.
 Usage:
     make_stac.py [output_dir]          # default: ./output
     make_stac.py --asset-base s3://<bucket>/<prefix> [output_dir]
-    make_stac.py --dump [output_dir]   # print every .cas key and NetCDF attribute
+    make_stac.py --dump [output_dir]   # every .cas key and NetCDF attribute
 
-Edit the *_KEYS lists below to match the key names in the real .cas file.
-Each list is tried in order; the first key that has a value wins.
+run_mocca.sh calls this script after a successful PGE run and passes no
+options, so MOCCA_COLLECTION and MOCCA_ASSET_BASE are how a DPS job
+reaches the two settings that have no sensible default.
+
+
+Where this fits in the MAAP STAC guidance
+-----------------------------------------
+MAAP asks that a DPS job describe its own output with STAC so the granule
+can be registered and discovered. The field-by-field requirements are in
+the user-data STAC metadata tutorial:
+
+    https://docs.maap-project.org/en/hub/technical_tutorials/user_data/
+    stac_metadata.html
+
+That page lists a minimum set of item-level fields, filled here as follows:
+
+    id              ProductName, else the .nc basename, with any extension
+                    stripped. mocca-v29601 renames the product and its
+                    .cas file to ProductName after a successful run, so the
+                    id is the same under every registration; only the asset
+                    hrefs follow the names on disk.
+    collection      MOCCA_COLLECTION, else the short name from the NetCDF
+                    attributes (SHORTNAME_KEYS); omitted with a warning
+                    when neither is available. See "The collection" below.
+    type            always "Feature"
+    stac_version    STAC_VERSION
+    geometry        a Polygon, or a MultiPolygon when the granule crosses
+                    the antimeridian. See "The footprint" below.
+    bbox            [west, south, east, north] from the same bounds
+    datetime        null, because a MOCCA granule covers a time range;
+                    start_datetime and end_datetime carry the extent,
+                    which the guidance allows in place of datetime
+    created_datetime
+                    ProductionDateTime, the provider date UMM requires
+    links           root and parent links to catalog.json, plus a
+                    collection link into the MAAP STAC API when the
+                    collection is known
+    assets          the .nc product (roles ["data"]), the .cas file and
+                    any .log file (roles ["metadata"]), each with href,
+                    type and roles
+
+The guidance also asks for absolute asset hrefs. DPS copies ./output to an
+S3 prefix that is not known inside the container, so that prefix has to be
+supplied from outside with --asset-base or MOCCA_ASSET_BASE. Without it the
+hrefs stay relative to the item file, which keeps them valid on disk, and
+the script warns.
+
+
+The collection
+--------------
+The collection ID is the registered collection's short name, for example
+SNDRAQVL2MOC. It carries no version: in CMR the version is a separate
+field, so the short name does not change between collection versions.
+
+It is not in the .cas file. A Sounder SIPS .cas carries CollectionLabel
+("std") and Collection ("production"), neither of which is a short name,
+and no shortname key of any kind, so SHORTNAME_KEYS can only ever match a
+NetCDF global attribute. If the product does not carry one either, set
+MOCCA_COLLECTION; otherwise the item ships with no collection, which the
+MAAP guidance lists as required.
+
+
+The footprint
+-------------
+Two routes, tried in this order.
+
+1. Global attributes. WEST_KEYS, EAST_KEYS, SOUTH_KEYS and NORTH_KEYS name
+   the ACDD attributes geospatial_lon_min, geospatial_lon_max,
+   geospatial_lat_min and geospatial_lat_max. All four must have a value.
+
+2. Footprint arrays. If any of the four is missing, read_latlon() walks the
+   NetCDF file (every group, matching names case-insensitively) for the
+   first variables named in LAT_NAMES and LON_NAMES, flattens them, and
+   keeps only pairs with -90 <= lat <= 90 and -180 <= lon <= 180. That
+   range test is what discards fill values and NaN, since NaN fails every
+   comparison. bounds_from_arrays() then takes min/max of each.
+
+Route 2 is the one that runs in practice. The .cas file has no bounding
+coordinates at all, and a MOCCA product writes the geospatial_* attributes
+but leaves at least one of them empty. clean() turns an empty attribute
+into None, which counts as missing; an empty attribute used to crash the
+run instead, which is why every value goes through clean() before it is
+tested.
+
+Falling back is all-or-nothing on purpose: mixing two declared edges with
+two computed ones would give a footprint that is neither.
+
+Antimeridian handling. A granule crossing 180 degrees has longitudes near
+both -180 and +180, so a plain min/max spans almost the whole globe.
+bounds_from_arrays() treats a longitude span wider than 180 degrees as a
+likely crossing: it shifts negative longitudes by +360 into 0..360, takes
+min/max again, and keeps the shifted result only when it is genuinely
+narrower, mapping values above 180 back down by -360. The result is then
+west > east, which is how a crossing is signalled to footprint(). Aqua
+flies about 14.5 orbits a day in 6-minute granules, so several granules a
+day cross the line.
+
+footprint() turns those four numbers into geometry:
+
+  * west <= east: one closed Polygon ring, corners in the order
+    (w,s) (e,s) (e,n) (w,n) (w,s).
+  * west > east: the box is split at the antimeridian into two rings, one
+    from west to 180 and one from -180 to east, returned as a MultiPolygon.
+    This is the STAC best practice; a single ring drawn from west to east
+    would wrap the wrong way around the globe.
+
+In both cases bbox stays [west, south, east, north], with west > east for a
+crossing granule, which is the GeoJSON convention.
+
+Both routes give an axis-aligned rectangle, which over-covers a tilted AIRS
+swath. That matches the upstream product: CMR's record for the parent AIRS
+L1B granule (AIRIBRAD v005) publishes a BoundingRectangle and no polygon,
+so there is no tighter footprint available to copy. Tracing the swath edge
+from the lat/lon arrays would be an improvement on both.
+
+
+Filling in the metadata
+-----------------------
+The *_KEYS lists below are the only thing that normally needs editing. Each
+is a list of candidate key names, tried in order, and the first key that
+has a value wins (see first()). To adapt the script to another product:
+
+1. Run the PGE once so ./output holds the .nc and .cas files.
+
+2. Run "make_stac.py --dump output" to print every key in the .cas file and
+   every NetCDF global attribute. That is the authoritative list of
+   available names; the names below come from the Sounder SIPS .cas file
+   and may not match another producer.
+
+3. Put the real key names at the FRONT of the matching list, keeping the
+   ACDD names as later entries so the NetCDF globals still act as a
+   fallback. Metadata is merged as {**nc_met, **cas_met}, so a key present
+   in both takes its value from the .cas file.
+
+4. Re-run without --dump. A missing value for a required field aborts with
+   the list of keys that were tried; the start and end times behave this
+   way, and so do the bounds once the footprint fallback has also failed.
+   Optional fields (id, version, level, the provider date and everything in
+   EXTRA_KEYS) are left out when nothing matches.
+
+EXTRA_KEYS are copied verbatim into item properties as "mocca:<key>".
+FileLocation, NodeInfo, JobId, TaskId and RequestId are left out on
+purpose: they record internal hostnames and paths that should not be
+published.
+
+Values hardcoded rather than read from metadata, and so needing an edit for
+any other product: STAC_VERSION, STAC_API, the "platform" and "instruments"
+properties, the "L2" default for processing:level, the "MOCCA_PGE" key
+under processing:software, and the asset titles.
 """
 import glob
 import json
@@ -28,9 +175,7 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-# The collection ID is the product's short name, read from the NetCDF
-# global attributes (SHORTNAME_KEYS). Set MOCCA_COLLECTION in the
-# environment to override it.
+# The MAAP STAC API, used only to build the item's "collection" link.
 STAC_API = "https://stac.maap-project.org"
 
 # Where the product files are archived, e.g. s3://<bucket>/<prefix>.
@@ -56,10 +201,13 @@ LEVEL_KEYS = ["ProcessingLevel"]
 # global attributes have no geospatial_* bounds.
 LAT_NAMES = ["latitude", "lat", "Latitude"]
 LON_NAMES = ["longitude", "lon", "Longitude"]
+# NetCDF global attributes holding the collection short name. The .cas
+# file has none, so MOCCA_COLLECTION is the fallback; see the module
+# docstring.
+SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 # Copied into item properties as "mocca:<key>" when present. Internal keys
 # (FileLocation, NodeInfo, JobId, TaskId, RequestId) are left out on
 # purpose: they name internal hosts and paths.
-SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 EXTRA_KEYS = ["GranuleNumber", "NominalDate", "ProductType", "DataVersion",
               "CollectionLabel", "AutomaticQualityFlag",
               "ProductionDateTime", "ProductionLocation"]
@@ -124,6 +272,24 @@ def read_nc_attrs(path):
 
 
 def first(meta, keys, name, required=True):
+    """Return the first non-empty value in meta for any of keys.
+
+    Args:
+        meta: Merged metadata, .cas values taking priority over the NetCDF
+            global attributes.
+        keys: Candidate key names, tried in order; the first key that has a
+            value wins.
+        name: Human-readable field name, used in the error message.
+        required: When True, abort the run if no key has a value.
+
+    Returns:
+        The cleaned value, reduced to its first element if it is a list, or
+        None when nothing matched and required is False.
+
+    Raises:
+        SystemExit: If required is True and none of the keys has a value.
+            The message lists the keys tried and points at --dump.
+    """
     for k in keys:
         v = clean(meta.get(k))
         if v is not None:
@@ -135,6 +301,21 @@ def first(meta, keys, name, required=True):
 
 
 def to_iso(value):
+    """Normalise a .cas or ACDD timestamp to the UTC form STAC expects.
+
+    Accepts a space or "T" between date and time, a trailing "Z", and an
+    explicit UTC offset. A timestamp carrying no zone is assumed to be UTC
+    rather than local time.
+
+    Args:
+        value: The timestamp as read from the metadata.
+
+    Returns:
+        The timestamp as "YYYY-MM-DDTHH:MM:SS.ffffffZ".
+
+    Raises:
+        ValueError: If the value is not an ISO 8601 timestamp.
+    """
     s = str(value).strip().replace(" ", "T")
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
@@ -145,9 +326,24 @@ def to_iso(value):
 
 
 def read_latlon(path):
-    """Return (lats, lons) as flat lists of valid values from the NetCDF file,
-    or (None, None) if no reader or no lat/lon variables are found.
-    Uses h5py if installed, otherwise netCDF4."""
+    """Return (lats, lons) as flat lists of valid values from a NetCDF file.
+
+    The footprint fallback, used when the global attributes carry no usable
+    geospatial_* bounds. Every group is searched, and a variable matches
+    when its own name (not its full path) is in LAT_NAMES or LON_NAMES,
+    compared case-insensitively; the first match of each kind wins. Pairs
+    outside -90..90 latitude or -180..180 longitude are dropped, which is
+    what removes fill values and NaN. Uses h5py if installed, otherwise
+    netCDF4; a NetCDF-4 file is an HDF5 file, so either reader works.
+
+    Args:
+        path: Path to the NetCDF product.
+
+    Returns:
+        A (lats, lons) tuple of equal-length lists, or (None, None) if no
+        reader is installed, either variable is missing, or no pair
+        survives the range test.
+    """
     lat_names = [n.lower() for n in LAT_NAMES]
     lon_names = [n.lower() for n in LON_NAMES]
     found = {}
@@ -195,8 +391,25 @@ def read_latlon(path):
 
 
 def bounds_from_arrays(lats, lons):
-    """West, south, east, north from footprint arrays. Handles granules that
-    cross the antimeridian (west > east in the result)."""
+    """West, south, east, north from footprint arrays.
+
+    South and north are simply min/max of the latitudes. West and east
+    start as min/max of the longitudes, but a span wider than 180 degrees
+    is read as a likely antimeridian crossing: the negative longitudes are
+    shifted by +360 into 0..360, min/max is taken again, and the shifted
+    pair is kept only if it spans less than the unshifted one. Values above
+    180 are then mapped back down by -360, which can leave west > east.
+    That inversion is meaningful, and footprint() relies on it to split the
+    geometry.
+
+    Args:
+        lats: Latitudes in degrees, fill values already removed.
+        lons: Longitudes in degrees, same length and order as lats.
+
+    Returns:
+        A (west, south, east, north) tuple in degrees. West > east means
+        the footprint crosses the antimeridian.
+    """
     s, n = min(lats), max(lats)
     w, e = min(lons), max(lons)
     if e - w > 180:                      # likely crosses 180: shift and retry
@@ -209,6 +422,25 @@ def bounds_from_arrays(lats, lons):
 
 
 def footprint(w, s, e, n):
+    """Build the STAC bbox and geometry for a bounding box.
+
+    A box that does not cross the antimeridian becomes one closed Polygon
+    ring. A crossing box (west > east) is split at 180 degrees into a
+    west-to-180 ring and a -180-to-east ring, returned as a MultiPolygon,
+    because a single ring drawn from west to east would wrap the long way
+    around the globe.
+
+    Args:
+        w: West longitude in degrees; may exceed e for a crossing box.
+        s: South latitude in degrees.
+        e: East longitude in degrees.
+        n: North latitude in degrees.
+
+    Returns:
+        A (bbox, geometry) tuple, where bbox is [west, south, east, north]
+        and geometry is a GeoJSON Polygon or MultiPolygon mapping. The bbox
+        keeps west > east for a crossing box, as GeoJSON prescribes.
+    """
     w, s, e, n = (float(x) for x in (w, s, e, n))
     if w <= e:
         ring = [[w, s], [e, s], [e, n], [w, n], [w, s]]
@@ -221,6 +453,31 @@ def footprint(w, s, e, n):
 
 
 def build_item(out_dir, asset_base=None):
+    """Assemble the STAC Item for the product found in out_dir.
+
+    Takes the first .nc file in alphabetical order, pairs it with
+    "<product>.cas" if that exists or else the first .cas file in the
+    directory, merges the two metadata sources (.cas winning), and resolves
+    the id, time range, footprint, properties, assets and links as the
+    module docstring describes. Warns on stderr, rather than failing, when
+    no asset base is set or no collection can be determined.
+
+    Args:
+        out_dir: Directory holding the PGE output.
+        asset_base: Archive location of the product files, e.g.
+            "s3://<bucket>/<prefix>". Each asset href becomes that location
+            plus the file name. When None, hrefs are relative to the item
+            file and a warning is printed.
+
+    Returns:
+        The STAC Item as a mapping ready for json.dump. The "collection"
+        key is absent when no short name was found.
+
+    Raises:
+        SystemExit: If out_dir holds no .nc product, if a required field has
+            no value, or if the bounds are absent from the metadata and no
+            lat/lon variables can be read from the product.
+    """
     ncs = sorted(glob.glob(os.path.join(out_dir, "*.nc")))
     if not ncs:
         raise SystemExit(f"make_stac: no .nc product in {out_dir}")
@@ -326,6 +583,30 @@ def build_item(out_dir, asset_base=None):
 
 
 def main(argv):
+    """Write the STAC Item and Catalog, or dump the available metadata.
+
+    With --dump, prints every key of each .cas file and every global
+    attribute of each .nc file in the directory, and writes nothing; use it
+    to discover the names to put in the *_KEYS lists. Otherwise writes
+    "<out_dir>/<item id>/<item id>.json" and "<out_dir>/catalog.json",
+    creating the item directory if needed.
+
+    The asset base comes from --asset-base (either "--asset-base VALUE" or
+    "--asset-base=VALUE") or the MOCCA_ASSET_BASE environment variable, the
+    flag winning. The collection comes from MOCCA_COLLECTION or the
+    product's short name; see the module docstring.
+
+    Args:
+        argv: Command-line arguments without the program name. The first
+            non-flag argument is the output directory, default "output".
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit: On an unknown option, on "--asset-base" with no value,
+            or from build_item() when the metadata is insufficient.
+    """
     dump = "--dump" in argv
     asset_base = os.environ.get(ASSET_BASE_ENV)
     args = []
