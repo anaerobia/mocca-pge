@@ -77,13 +77,26 @@ file in it. An empty input (`""`) is the same as no input.
 
 ## Outputs
 
-`./output` contains the product `SNDR.AQUA.MOCCA.101.nc`, its `.cas`
-metadata file, the log, and the STAC metadata:
+`./output` contains the product, its `.cas` metadata file, the log, and the
+STAC metadata:
 
 ```
 output/catalog.json
 output/<ProductName without .nc>/<ProductName without .nc>.json   # STAC Item
 ```
+
+In `mocca-v29601`, the product and the `.cas` file have the `ProductName` in
+the `.cas` file, for example:
+
+- `AIRS.AQUA.MODIS.20260104T1441.m06.g147.L2_MOCCA.std.v02_95_00.J.261027184906.nc`
+- `AIRS.AQUA.MODIS.20260104T1441.m06.g147.L2_MOCCA.std.v02_95_00.J.261027184906.nc.cas`
+
+The PGE writes `SNDR.AQUA.MOCCA.101.nc` (`L2OutputFile` in the config). After
+a successful run, the image entrypoint renames the two files. If the PGE
+fails, the files keep their names. The older registrations (`mocca-v296`,
+`mocca-v295`) do not rename the files. The STAC Item takes its id from
+`ProductName`, so the id is the same under all three registrations; only the
+asset hrefs follow the file names on disk.
 
 `make_stac.py` writes the STAC files after a successful PGE run. It reads
 the start and end times, the product name, `BuildId`, `ProcessingLevel` and
