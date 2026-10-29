@@ -15,10 +15,20 @@ commands, and a Dockerfile that adds this repository to that image at
 | v02.96.00 | `anaerobia/mocca:v296` | `anaerobia/mocca:v296-maap` | `algorithm-v296.json` (`mocca-v296`) | 197 |
 | v02.95.00 | `anaerobia/mocca:v295` | `anaerobia/mocca:v295-maap` | `algorithm-v295.json` (`mocca-v295`) | 164 |
 
+Build the `-maap` image on `sleet2`, after the base image is built and
+tested there:
+
 ```bash
-docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=v29601 \
-    -t anaerobia/mocca:v29601-maap --push .
+docker build --platform linux/amd64 --build-arg MOCCA_TAG=v29601 \
+    -t anaerobia/mocca:v29601-maap .
+docker push anaerobia/mocca:v29601-maap
 ```
+
+The full release procedure (build, tests, the two pushes, registration and
+the first job) is section 7 of `src/sips_pge/l2_mocca/docker/RUNBOOK.md` in
+`SIPS/MOCCA-v29601`. **After each change to the base image, rebuild and push
+the `-maap` image, then register again.** If you do not, MAAP runs the old
+code.
 
 ## MAAP registration
 
