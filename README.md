@@ -98,7 +98,11 @@ fails, the files keep their names. The older registrations (`mocca-v296`,
 `ProductName`, so the id is the same under all three registrations; only the
 asset hrefs follow the file names on disk.
 
-`make_stac.py` writes the STAC files after a successful PGE run. It reads
+`make_stac.py` writes the STAC files with
+[pystac](https://pystac.readthedocs.io/) after a successful PGE run. The
+PGE's Python is too old for pystac, so the image has a separate environment,
+`/opt/stac-env` (pystac 1.10.1, which writes STAC 1.0.0, and h5py), and
+`run_mocca.sh` runs the script with it. It reads
 the start and end times, the product name, `BuildId`, `ProcessingLevel` and
 the granule fields from the `.cas` file. The `.cas` file has no bounding
 coordinates, so the footprint comes from the latitude and longitude
@@ -117,7 +121,7 @@ product files with `--asset-base` or the `MOCCA_ASSET_BASE` environment
 variable; each asset href is that location plus the file name:
 
 ```bash
-python3 make_stac.py --asset-base=s3://<bucket>/<prefix> output
+/opt/stac-env/bin/python make_stac.py --asset-base=s3://<bucket>/<prefix> output
 ```
 
 Without it, the hrefs are relative to the item file and the script prints a
@@ -133,7 +137,7 @@ job ran. The config file input is not linked, because it is an internal path.
 To see every key in the `.cas` file and every NetCDF global attribute:
 
 ```bash
-python3 make_stac.py --dump output
+/opt/stac-env/bin/python make_stac.py --dump output
 ```
 
 ## Source

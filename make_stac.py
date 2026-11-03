@@ -4,14 +4,17 @@ make_stac.py -- write STAC metadata for the MOCCA product.
 
 The MOCCA PGE writes the product and an OODT CAS metadata file (.cas, XML)
 to ./output. This script reads the .cas file, fills any missing values from
-the NetCDF global attributes (ACDD names), and writes a STAC Item and a
-STAC Catalog that points to it:
+the NetCDF global attributes (ACDD names), and uses pystac to write a STAC
+Item and a self-contained STAC Catalog that points to it:
 
     output/catalog.json
     output/<item id>/<item id>.json
 
-Only the Python standard library is required. netCDF4 or h5py is used for
-the NetCDF fallback when it is installed.
+pystac is required. Pin pystac 1.10.x: it writes STAC 1.0.0, which is what
+the MAAP STAC API serves, and later releases write STAC 1.1.0. h5py or
+netCDF4 is used for the NetCDF fallback when it is installed. The PGE's own
+Python (3.6) is too old for pystac, so the Dockerfile builds a separate
+environment at /opt/stac-env and run_mocca.sh runs this script with it.
 
 Usage:
     make_stac.py [output_dir]          # default: ./output
@@ -43,7 +46,7 @@ That page lists a minimum set of item-level fields, filled here as follows:
                     attributes (SHORTNAME_KEYS); omitted with a warning
                     when neither is available. See "The collection" below.
     type            always "Feature"
-    stac_version    STAC_VERSION
+    stac_version    set by pystac (1.0.0 for pystac 1.10.x)
     geometry        a Polygon, or a MultiPolygon when the granule crosses
                     the antimeridian. See "The footprint" below.
     bbox            [west, south, east, north] from the same bounds
@@ -164,16 +167,24 @@ purpose: they record internal hostnames and paths that should not be
 published.
 
 Values hardcoded rather than read from metadata, and so needing an edit for
-any other product: STAC_VERSION, STAC_API, the "platform" and "instruments"
-properties, the "L2" default for processing:level, the "MOCCA_PGE" key
-under processing:software, and the asset titles.
+any other product: STAC_API, the "platform" and "instruments" properties,
+the "L2" default for processing:level, the "MOCCA_PGE" key under
+processing:software, and the asset titles.
 """
+from __future__ import annotations
+
+import argparse
 import glob
 import json
 import os
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
+
+import pystac
+from pystac.utils import datetime_to_str
 
 # The MAAP STAC API, used only to build the item's "collection" link.
 STAC_API = "https://stac.maap-project.org"
@@ -183,7 +194,10 @@ STAC_API = "https://stac.maap-project.org"
 # MOCCA_ASSET_BASE environment variable. Without it, hrefs are relative
 # to the item file and the script prints a warning.
 ASSET_BASE_ENV = "MOCCA_ASSET_BASE"
-STAC_VERSION = "1.0.0"
+COLLECTION_ENV = "MOCCA_COLLECTION"
+
+PROCESSING_EXT = "https://stac-extensions.github.io/processing/v1.2.0/schema.json"
+NETCDF_MEDIA_TYPE = "application/x-netcdf"
 
 # .cas key names (first match wins), then NetCDF global attribute names.
 # The Sounder SIPS .cas file has the name, times and versions, but no
@@ -197,6 +211,7 @@ SOUTH_KEYS = ["geospatial_lat_min"]
 NORTH_KEYS = ["geospatial_lat_max"]
 VERSION_KEYS = ["BuildId"]
 LEVEL_KEYS = ["ProcessingLevel"]
+PRODUCED_KEYS = ["ProductionDateTime", "date_created"]
 # NetCDF variable names searched (case-insensitive, in any group) when the
 # global attributes have no geospatial_* bounds.
 LAT_NAMES = ["latitude", "lat", "Latitude"]
@@ -212,11 +227,19 @@ EXTRA_KEYS = ["GranuleNumber", "NominalDate", "ProductType", "DataVersion",
               "CollectionLabel", "AutomaticQualityFlag",
               "ProductionDateTime", "ProductionLocation"]
 
+Meta = dict[str, Any]
+BBox = tuple[float, float, float, float]
 
-def read_cas(path):
+
+def warn(message: str) -> None:
+    """Print a make_stac warning on stderr."""
+    print(f"make_stac: warning: {message}", file=sys.stderr)
+
+
+def read_cas(path: str) -> Meta:
     """Return {key: value or [values]} from an OODT CAS met XML file."""
     root = ET.parse(path).getroot()
-    met = {}
+    met: Meta = {}
     for kv in root.iter():
         if not kv.tag.endswith("keyval"):
             continue
@@ -233,10 +256,12 @@ def read_cas(path):
     return met
 
 
-def clean(v):
+def clean(v: Any) -> Any:
     """Turn a NetCDF/HDF5 attribute value into a plain Python value.
+
     numpy arrays and scalars become lists or numbers, bytes become str,
-    one-element lists become their element, and empty values become None."""
+    one-element lists become their element, and empty values become None.
+    """
     if hasattr(v, "tolist"):             # numpy array or numpy scalar
         v = v.tolist()
     if isinstance(v, bytes):
@@ -244,19 +269,20 @@ def clean(v):
     if isinstance(v, list):
         v = [x.decode(errors="replace") if isinstance(x, bytes) else x
              for x in v]
-        if len(v) == 0:
+        if not v:
             return None
         if len(v) == 1:
             return v[0]
     if isinstance(v, str):
-        v = v.strip()
-        return v or None
+        return v.strip() or None
     return v
 
 
-def read_nc_attrs(path):
-    """Return the NetCDF global attributes as plain Python values,
-    or {} if no reader is installed."""
+def read_nc_attrs(path: str) -> Meta:
+    """Return the NetCDF global attributes as plain Python values.
+
+    Returns {} if neither netCDF4 nor h5py is installed.
+    """
     try:
         import netCDF4
         with netCDF4.Dataset(path) as ds:
@@ -271,7 +297,8 @@ def read_nc_attrs(path):
         return {}
 
 
-def first(meta, keys, name, required=True):
+def first(meta: Meta, keys: list[str], name: str,
+          required: bool = True) -> Any:
     """Return the first non-empty value in meta for any of keys.
 
     Args:
@@ -300,8 +327,8 @@ def first(meta, keys, name, required=True):
     return None
 
 
-def to_iso(value):
-    """Normalise a .cas or ACDD timestamp to the UTC form STAC expects.
+def parse_time(value: Any) -> datetime:
+    """Parse a .cas or ACDD timestamp into an aware UTC datetime.
 
     Accepts a space or "T" between date and time, a trailing "Z", and an
     explicit UTC offset. A timestamp carrying no zone is assumed to be UTC
@@ -311,7 +338,7 @@ def to_iso(value):
         value: The timestamp as read from the metadata.
 
     Returns:
-        The timestamp as "YYYY-MM-DDTHH:MM:SS.ffffffZ".
+        The timestamp as a timezone-aware datetime in UTC.
 
     Raises:
         ValueError: If the value is not an ISO 8601 timestamp.
@@ -322,10 +349,10 @@ def to_iso(value):
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return dt.astimezone(timezone.utc)
 
 
-def read_latlon(path):
+def read_latlon(path: str) -> tuple[list[float], list[float]] | None:
     """Return (lats, lons) as flat lists of valid values from a NetCDF file.
 
     The footprint fallback, used when the global attributes carry no usable
@@ -340,24 +367,24 @@ def read_latlon(path):
         path: Path to the NetCDF product.
 
     Returns:
-        A (lats, lons) tuple of equal-length lists, or (None, None) if no
-        reader is installed, either variable is missing, or no pair
-        survives the range test.
+        A (lats, lons) tuple of equal-length lists, or None if no reader is
+        installed, either variable is missing, or no pair survives the
+        range test.
     """
-    lat_names = [n.lower() for n in LAT_NAMES]
-    lon_names = [n.lower() for n in LON_NAMES]
-    found = {}
+    wanted = {"lat": {n.lower() for n in LAT_NAMES},
+              "lon": {n.lower() for n in LON_NAMES}}
+    found: dict[str, list[float]] = {}
 
-    def take(base, read):
+    def take(base: str, read: Callable[[], list[float]]) -> None:
         base = base.lower()
-        for kind, names in (("lat", lat_names), ("lon", lon_names)):
+        for kind, names in wanted.items():
             if kind not in found and base in names:
                 found[kind] = read()
 
     try:
         import h5py
 
-        def visit(name, obj):
+        def visit(name: str, obj: Any) -> None:
             if isinstance(obj, h5py.Dataset):
                 take(name.rsplit("/", 1)[-1],
                      lambda: obj[()].ravel().tolist())
@@ -368,12 +395,17 @@ def read_latlon(path):
         try:
             import netCDF4
         except ImportError:
-            return None, None
+            return None
 
-        def walk(group):
+        def values(var: Any) -> list[float]:
+            data = var[:]
+            if hasattr(data, "filled"):    # masked array: fill -> NaN
+                data = data.filled(float("nan"))
+            return data.ravel().tolist()
+
+        def walk(group: Any) -> None:
             for vname, var in group.variables.items():
-                take(vname, lambda: var[:].filled(float("nan")).ravel().tolist()
-                     if hasattr(var[:], "filled") else var[:].ravel().tolist())
+                take(vname, lambda var=var: values(var))
             for sub in group.groups.values():
                 walk(sub)
 
@@ -381,16 +413,17 @@ def read_latlon(path):
             walk(ds)
 
     if "lat" not in found or "lon" not in found:
-        return None, None
+        return None
     # The range test drops fill values and NaN (NaN fails every comparison).
     pairs = [(y, x) for y, x in zip(found["lat"], found["lon"])
              if -90 <= y <= 90 and -180 <= x <= 180]
     if not pairs:
-        return None, None
-    return [p[0] for p in pairs], [p[1] for p in pairs]
+        return None
+    lats, lons = zip(*pairs)
+    return list(lats), list(lons)
 
 
-def bounds_from_arrays(lats, lons):
+def bounds_from_arrays(lats: list[float], lons: list[float]) -> BBox:
     """West, south, east, north from footprint arrays.
 
     South and north are simply min/max of the latitudes. West and east
@@ -421,7 +454,8 @@ def bounds_from_arrays(lats, lons):
     return w, s, e, n
 
 
-def footprint(w, s, e, n):
+def footprint(w: float, s: float, e: float,
+              n: float) -> tuple[list[float], dict[str, Any]]:
     """Build the STAC bbox and geometry for a bounding box.
 
     A box that does not cross the antimeridian becomes one closed Polygon
@@ -442,31 +476,36 @@ def footprint(w, s, e, n):
         keeps west > east for a crossing box, as GeoJSON prescribes.
     """
     w, s, e, n = (float(x) for x in (w, s, e, n))
+    bbox = [w, s, e, n]
     if w <= e:
         ring = [[w, s], [e, s], [e, n], [w, n], [w, s]]
-        return [w, s, e, n], {"type": "Polygon", "coordinates": [ring]}
+        return bbox, {"type": "Polygon", "coordinates": [ring]}
     # Crosses the antimeridian: split into two boxes (STAC best practice).
-    left = [[w, s], [180, s], [180, n], [w, n], [w, s]]
-    right = [[-180, s], [e, s], [e, n], [-180, n], [-180, s]]
-    return [w, s, e, n], {"type": "MultiPolygon",
-                          "coordinates": [[left], [right]]}
+    left = [[w, s], [180.0, s], [180.0, n], [w, n], [w, s]]
+    right = [[-180.0, s], [e, s], [e, n], [-180.0, n], [-180.0, s]]
+    return bbox, {"type": "MultiPolygon", "coordinates": [[left], [right]]}
 
 
-def normalize_s3(uri):
-    """Turn the DPS job-result form s3://<host>[:port]/<bucket>/<key> into the
-    standard s3://<bucket>/<key>. Other values are returned unchanged."""
+def normalize_s3(uri: str | None) -> str | None:
+    """Turn a DPS job-result S3 URL into the standard s3://<bucket>/<key>.
+
+    DPS reports results as s3://<host>[:port]/<bucket>/<key>. Other values
+    are returned unchanged.
+    """
     if not uri or not uri.startswith("s3://"):
         return uri
-    first_part, _, rest = uri[5:].partition("/")
-    if rest and (":" in first_part or first_part.endswith("amazonaws.com")):
+    host, _, rest = uri[len("s3://"):].partition("/")
+    if rest and (":" in host or host.endswith("amazonaws.com")):
         return "s3://" + rest
     return uri
 
 
-def read_context(out_dir):
-    """Return the HySDS job context (dict) for a DPS output folder, or {}.
+def read_context(out_dir: str) -> Meta:
+    """Return the HySDS job context for a DPS output folder, or {}.
+
     After a job, DPS uploads it as <dataset>.context.json next to the
-    outputs; inside a running job it is ../_context.json."""
+    outputs; inside a running job it is ../_context.json.
+    """
     paths = sorted(glob.glob(os.path.join(out_dir, "*.context.json")))
     paths.append(os.path.join(out_dir, "..", "_context.json"))
     for path in paths:
@@ -479,22 +518,120 @@ def read_context(out_dir):
     return {}
 
 
-def derived_from(context):
-    """STAC Item URLs of the job's inputs, from the context's provenance."""
-    urls = [u[4:] if u.startswith("url:") else u
-            for u in (context.get("_prov") or {}).get("wasDerivedFrom") or []]
+def derived_from(context: Meta) -> list[str]:
+    """Return the STAC Item URLs of the job's inputs from its provenance."""
+    sources = (context.get("_prov") or {}).get("wasDerivedFrom") or []
+    urls = [u.removeprefix("url:") for u in sources]
     return [u for u in urls if u.startswith(("http://", "https://"))]
 
 
-def build_item(out_dir, asset_base=None):
+def container_image(context: Meta) -> str | None:
+    """Return the first dependency container image named in the context."""
+    spec = context.get("job_specification") or {}
+    for dep in spec.get("dependency_images") or []:
+        if dep.get("container_image_name"):
+            return dep["container_image_name"]
+    return None
+
+
+def find_inputs(out_dir: str) -> tuple[str, str | None]:
+    """Return the product and its .cas file in out_dir.
+
+    The product is the first .nc file in alphabetical order. The .cas file
+    is "<product>.cas" if it exists, else the first .cas file, else None.
+
+    Raises:
+        SystemExit: If out_dir holds no .nc product.
+    """
+    ncs = sorted(glob.glob(os.path.join(out_dir, "*.nc")))
+    if not ncs:
+        raise SystemExit(f"make_stac: no .nc product in {out_dir}")
+    nc = ncs[0]
+    if os.path.exists(nc + ".cas"):
+        return nc, nc + ".cas"
+    cases = sorted(glob.glob(os.path.join(out_dir, "*.cas")))
+    return nc, cases[0] if cases else None
+
+
+def resolve_bounds(meta: Meta, nc: str) -> BBox:
+    """Return (west, south, east, north) from metadata or the lat/lon arrays.
+
+    Raises:
+        SystemExit: If the metadata lacks any edge and no lat/lon variables
+            can be read from the product.
+    """
+    box = [first(meta, keys, name, required=False) for keys, name in
+           ((WEST_KEYS, "west"), (SOUTH_KEYS, "south"),
+            (EAST_KEYS, "east"), (NORTH_KEYS, "north"))]
+    if None not in box:
+        return tuple(float(x) for x in box)
+    latlon = read_latlon(nc)
+    if latlon is None:
+        raise SystemExit("make_stac: no bounds in the metadata and no "
+                         f"lat/lon variables {LAT_NAMES}/{LON_NAMES} "
+                         f"readable in {nc}")
+    return bounds_from_arrays(*latlon)
+
+
+def build_properties(meta: Meta, context: Meta) -> Meta:
+    """Return the item properties beyond the datetime fields."""
+    props: Meta = {
+        "platform": "aqua",
+        "instruments": ["airs", "modis"],
+        "processing:level": first(meta, LEVEL_KEYS, "level",
+                                  required=False) or "L2",
+    }
+    produced = first(meta, PRODUCED_KEYS, "production time", required=False)
+    if produced:
+        props["created_datetime"] = datetime_to_str(parse_time(produced))
+    version = first(meta, VERSION_KEYS, "version", required=False)
+    if version:
+        props["processing:software"] = {"MOCCA_PGE": str(version)}
+    for k in EXTRA_KEYS:
+        v = clean(meta.get(k))
+        if v is not None:
+            props[f"mocca:{k}"] = v
+    image = container_image(context)
+    if image:
+        props["mocca:container_image"] = image
+    return props
+
+
+def add_assets(item: pystac.Item, nc: str, cas: str | None, out_dir: str,
+               asset_base: str | None) -> None:
+    """Attach the product, .cas and log files to item as assets.
+
+    With asset_base, each href is that location plus the file name.
+    Without it, each href is the absolute local path; write_catalog() makes
+    those relative to the item file when it saves.
+    """
+    def href(path: str) -> str:
+        if asset_base:
+            return f"{asset_base.rstrip('/')}/{os.path.basename(path)}"
+        return os.path.abspath(path)
+
+    item.add_asset("data", pystac.Asset(
+        href(nc), title="MOCCA product", media_type=NETCDF_MEDIA_TYPE,
+        roles=["data"]))
+    if cas:
+        item.add_asset("metadata", pystac.Asset(
+            href(cas), title="OODT CAS metadata",
+            media_type=pystac.MediaType.XML, roles=["metadata"]))
+    logs = sorted(glob.glob(os.path.join(out_dir, "*.log")))
+    if logs:
+        item.add_asset("log", pystac.Asset(
+            href(logs[0]), media_type=pystac.MediaType.TEXT,
+            roles=["metadata"]))
+
+
+def build_item(out_dir: str, asset_base: str | None = None) -> pystac.Item:
     """Assemble the STAC Item for the product found in out_dir.
 
-    Takes the first .nc file in alphabetical order, pairs it with
-    "<product>.cas" if that exists or else the first .cas file in the
-    directory, merges the two metadata sources (.cas winning), and resolves
-    the id, time range, footprint, properties, assets and links as the
-    module docstring describes. Warns on stderr, rather than failing, when
-    no asset base is set or no collection can be determined.
+    Pairs the product with its .cas file (see find_inputs()), merges the
+    two metadata sources (.cas winning), and resolves the id, time range,
+    footprint, properties, assets and links as the module docstring
+    describes. Warns on stderr, rather than failing, when no asset base is
+    set or no collection can be determined.
 
     Args:
         out_dir: Directory holding the PGE output.
@@ -504,210 +641,147 @@ def build_item(out_dir, asset_base=None):
             file and a warning is printed.
 
     Returns:
-        The STAC Item as a mapping ready for json.dump. The "collection"
-        key is absent when no short name was found.
+        The STAC Item. It has no root or parent link yet; write_catalog()
+        adds those. collection_id is None when no short name was found.
 
     Raises:
         SystemExit: If out_dir holds no .nc product, if a required field has
             no value, or if the bounds are absent from the metadata and no
             lat/lon variables can be read from the product.
     """
-    ncs = sorted(glob.glob(os.path.join(out_dir, "*.nc")))
-    if not ncs:
-        raise SystemExit(f"make_stac: no .nc product in {out_dir}")
-    nc = ncs[0]
-    cas = nc + ".cas" if os.path.exists(nc + ".cas") else (
-        sorted(glob.glob(os.path.join(out_dir, "*.cas"))) or [None])[0]
+    nc, cas = find_inputs(out_dir)
+    meta = {**read_nc_attrs(nc), **(read_cas(cas) if cas else {})}
+    context = read_context(out_dir)
 
-    cas_met = read_cas(cas) if cas else {}
-    nc_met = read_nc_attrs(nc)
-    meta = {**nc_met, **cas_met}          # .cas values take priority
+    name = first(meta, ID_KEYS, "id", required=False) or nc
+    item_id = os.path.splitext(os.path.basename(str(name)))[0]
+    bbox, geometry = footprint(*resolve_bounds(meta, nc))
+    collection = (os.environ.get(COLLECTION_ENV)
+                  or first(meta, SHORTNAME_KEYS, "short name",
+                           required=False))
 
-    item_id = first(meta, ID_KEYS, "id", required=False) \
-        or os.path.splitext(os.path.basename(nc))[0]
-    item_id = os.path.splitext(os.path.basename(str(item_id)))[0]
-    start = to_iso(first(meta, START_KEYS, "start time"))
-    end = to_iso(first(meta, END_KEYS, "end time"))
-    box = [first(meta, k, n, required=False) for k, n in
-           ((WEST_KEYS, "west"), (SOUTH_KEYS, "south"),
-            (EAST_KEYS, "east"), (NORTH_KEYS, "north"))]
-    if None in box:
-        lats, lons = read_latlon(nc)
-        if lats is None:
-            raise SystemExit("make_stac: no bounds in the metadata and no "
-                             f"lat/lon variables {LAT_NAMES}/{LON_NAMES} "
-                             f"readable in {nc}")
-        box = bounds_from_arrays(lats, lons)
-    bbox, geom = footprint(*box)
-
-    props = {
-        "datetime": None,
-        "start_datetime": start,
-        "end_datetime": end,
-        "platform": "aqua",
-        "instruments": ["airs", "modis"],
-        "processing:level": first(meta, LEVEL_KEYS, "level",
-                                  required=False) or "L2",
-    }
-    produced = first(meta, ["ProductionDateTime", "date_created"],
-                     "production time", required=False)
-    if produced:
-        props["created_datetime"] = to_iso(produced)
-    version = first(meta, VERSION_KEYS, "version", required=False)
-    if version:
-        props["processing:software"] = {"MOCCA_PGE": str(version)}
-    for k in EXTRA_KEYS:
-        v = clean(meta.get(k))
-        if v is not None:
-            props[f"mocca:{k}"] = v
-
-    def href(path):
-        name = os.path.basename(path)
-        return f"{asset_base.rstrip('/')}/{name}" if asset_base else f"../{name}"
+    item = pystac.Item(
+        id=item_id,
+        geometry=geometry,
+        bbox=bbox,
+        datetime=None,
+        start_datetime=parse_time(first(meta, START_KEYS, "start time")),
+        end_datetime=parse_time(first(meta, END_KEYS, "end time")),
+        properties=build_properties(meta, context),
+        stac_extensions=[PROCESSING_EXT],
+        collection=collection,
+    )
 
     if not asset_base:
-        print(f"make_stac: warning: no asset base set ({ASSET_BASE_ENV} or "
-              "--asset-base); asset hrefs are relative. MAAP needs absolute "
-              "s3:// hrefs.", file=sys.stderr)
-    assets = {"data": {"href": href(nc),
-                       "type": "application/x-netcdf",
-                       "title": "MOCCA product",
-                       "roles": ["data"]}}
-    if cas:
-        assets["metadata"] = {"href": href(cas),
-                              "type": "application/xml",
-                              "title": "OODT CAS metadata",
-                              "roles": ["metadata"]}
-    for log in glob.glob(os.path.join(out_dir, "*.log")):
-        assets["log"] = {"href": href(log),
-                         "type": "text/plain", "roles": ["metadata"]}
+        warn(f"no asset base set ({ASSET_BASE_ENV} or --asset-base); asset "
+             "hrefs are relative. MAAP needs absolute s3:// hrefs.")
+    add_assets(item, nc, cas, out_dir, asset_base)
 
-    context = read_context(out_dir)
-    images = [d.get("container_image_name") for d in
-              (context.get("job_specification") or {}).get("dependency_images") or []
-              if d.get("container_image_name")]
-    if images:
-        props["mocca:container_image"] = images[0]
-
-    collection = (os.environ.get("MOCCA_COLLECTION")
-                  or first(meta, SHORTNAME_KEYS, "short name", required=False))
-    links = [{"rel": "root", "href": "../catalog.json",
-              "type": "application/json"},
-             {"rel": "parent", "href": "../catalog.json",
-              "type": "application/json"}]
     for url in derived_from(context):
-        links.append({"rel": "derived_from", "href": url,
-                      "type": "application/geo+json"})
+        item.add_link(pystac.Link(pystac.RelType.DERIVED_FROM, url,
+                                  media_type=pystac.MediaType.GEOJSON))
     if collection:
-        links.append({"rel": "collection",
-                      "href": f"{STAC_API}/collections/{collection}",
-                      "type": "application/json"})
+        item.add_link(pystac.Link(pystac.RelType.COLLECTION,
+                                  f"{STAC_API}/collections/{collection}",
+                                  media_type=pystac.MediaType.JSON))
     else:
-        print("make_stac: warning: no short name found "
-              f"(tried {SHORTNAME_KEYS}); the item has no collection. "
-              "Run with --dump to see the NetCDF attributes.",
-              file=sys.stderr)
-
-    item = {
-        "type": "Feature",
-        "stac_version": STAC_VERSION,
-        "stac_extensions": [
-            "https://stac-extensions.github.io/processing/v1.2.0/schema.json"],
-        "id": item_id,
-        "collection": collection,
-        "geometry": geom,
-        "bbox": bbox,
-        "properties": props,
-        "assets": assets,
-        "links": links,
-    }
-    if not collection:
-        del item["collection"]
+        warn(f"no short name found (tried {SHORTNAME_KEYS}); the item has "
+             "no collection. Run with --dump to see the NetCDF attributes.")
     return item
 
 
-def main(argv):
+def write_catalog(item: pystac.Item, out_dir: str) -> pystac.Catalog:
+    """Write item and a self-contained catalog for it under out_dir.
+
+    The catalog goes to <out_dir>/catalog.json and the item to
+    <out_dir>/<item id>/<item id>.json, with relative root, parent and item
+    links. Local asset hrefs are made relative to the item file; absolute
+    s3:// hrefs are kept.
+
+    Returns:
+        The saved catalog.
+    """
+    catalog = pystac.Catalog(
+        id=f"{item.collection_id or 'MOCCA'}-{item.id}",
+        description="MOCCA product from a MAAP DPS job",
+    )
+    # pystac types the item link application/json; an Item is GeoJSON.
+    catalog.add_item(item).media_type = pystac.MediaType.GEOJSON
+    # Set the hrefs directly: catalog.normalize_hrefs() would resolve the
+    # item's collection link, i.e. fetch it from the MAAP STAC API.
+    out_dir = os.path.abspath(out_dir)
+    catalog.set_self_href(os.path.join(out_dir, "catalog.json"))
+    item.set_self_href(os.path.join(out_dir, item.id, f"{item.id}.json"))
+    catalog.make_all_asset_hrefs_relative()
+    catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    return catalog
+
+
+def dump(out_dir: str) -> None:
+    """Print every .cas key and NetCDF global attribute in out_dir."""
+    for cas in sorted(glob.glob(os.path.join(out_dir, "*.cas"))):
+        print(f"# {cas}")
+        for k, v in read_cas(cas).items():
+            print(f"{k} = {v}")
+    for nc in sorted(glob.glob(os.path.join(out_dir, "*.nc"))):
+        print(f"# {nc} (global attributes)")
+        for k, v in read_nc_attrs(nc).items():
+            print(f"{k} = {v}")
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse the command line; see the module docstring for usage."""
+    parser = argparse.ArgumentParser(
+        prog="make_stac.py",
+        description="Write a STAC Item and Catalog for the MOCCA product.")
+    parser.add_argument(
+        "out_dir", nargs="?", default="output",
+        help="local directory holding the PGE output (default: output)")
+    parser.add_argument(
+        "--asset-base", default=os.environ.get(ASSET_BASE_ENV),
+        help="archive location of the files, e.g. s3://<bucket>/<prefix> "
+             f"(default: ${ASSET_BASE_ENV})")
+    parser.add_argument(
+        "--dump", action="store_true",
+        help="print every .cas key and NetCDF attribute; write nothing")
+    args = parser.parse_args(argv)
+    if args.out_dir.startswith(("s3://", "http://", "https://")):
+        parser.error("the directory must be a local path (for example "
+                     "my-private-bucket/dps_output/...), not a URL. Give the "
+                     "S3 location with --asset-base.")
+    args.asset_base = normalize_s3(args.asset_base)
+    return args
+
+
+def main(argv: list[str]) -> None:
     """Write the STAC Item and Catalog, or dump the available metadata.
 
     With --dump, prints every key of each .cas file and every global
     attribute of each .nc file in the directory, and writes nothing; use it
     to discover the names to put in the *_KEYS lists. Otherwise writes
-    "<out_dir>/<item id>/<item id>.json" and "<out_dir>/catalog.json",
-    creating the item directory if needed.
+    "<out_dir>/<item id>/<item id>.json" and "<out_dir>/catalog.json".
 
-    The asset base comes from --asset-base (either "--asset-base VALUE" or
-    "--asset-base=VALUE") or the MOCCA_ASSET_BASE environment variable, the
-    flag winning. The collection comes from MOCCA_COLLECTION or the
-    product's short name; see the module docstring.
+    The asset base comes from --asset-base or the MOCCA_ASSET_BASE
+    environment variable, the flag winning. The collection comes from
+    MOCCA_COLLECTION or the product's short name; see the module docstring.
 
     Args:
-        argv: Command-line arguments without the program name. The first
-            non-flag argument is the output directory, default "output".
-
-    Returns:
-        None.
+        argv: Command-line arguments without the program name.
 
     Raises:
-        SystemExit: On an unknown option, on "--asset-base" with no value,
-            or from build_item() when the metadata is insufficient.
+        SystemExit: On a bad command line, or from build_item() when the
+            metadata is insufficient.
     """
-    dump = "--dump" in argv
-    asset_base = os.environ.get(ASSET_BASE_ENV)
-    args = []
-    rest = list(argv)
-    while rest:
-        a = rest.pop(0)
-        if a == "--dump":
-            continue
-        if a.startswith("--asset-base="):
-            asset_base = a.split("=", 1)[1]
-        elif a == "--asset-base":
-            if not rest:
-                raise SystemExit("make_stac: --asset-base needs a value")
-            asset_base = rest.pop(0)
-        elif a.startswith("--"):
-            raise SystemExit(f"make_stac: unknown option {a}")
-        else:
-            args.append(a)
-    out_dir = args[0] if args else "output"
-    asset_base = normalize_s3(asset_base)
-    if out_dir.startswith(("s3://", "http://", "https://")):
-        raise SystemExit("make_stac: the directory must be a local path (for "
-                         "example my-private-bucket/dps_output/...), not a URL. "
-                         "Give the S3 location with --asset-base.")
-
-    if dump:
-        for cas in glob.glob(os.path.join(out_dir, "*.cas")):
-            print(f"# {cas}")
-            for k, v in read_cas(cas).items():
-                print(f"{k} = {v}")
-        for nc in glob.glob(os.path.join(out_dir, "*.nc")):
-            print(f"# {nc} (global attributes)")
-            for k, v in read_nc_attrs(nc).items():
-                print(f"{k} = {v}")
+    args = parse_args(argv)
+    if args.dump:
+        dump(args.out_dir)
         return
 
-    item = build_item(out_dir, asset_base)
-    item_dir = os.path.join(out_dir, item["id"])
-    os.makedirs(item_dir, exist_ok=True)
-    item_path = os.path.join(item_dir, item["id"] + ".json")
-    with open(item_path, "w") as f:
-        json.dump(item, f, indent=2)
-
-    catalog = {
-        "type": "Catalog",
-        "stac_version": STAC_VERSION,
-        "id": f"{item.get('collection', 'MOCCA')}-{item['id']}",
-        "description": "MOCCA product from a MAAP DPS job",
-        "links": [{"rel": "root", "href": "./catalog.json",
-                   "type": "application/json"},
-                  {"rel": "item", "href": f"./{item['id']}/{item['id']}.json",
-                   "type": "application/geo+json"}],
-    }
-    with open(os.path.join(out_dir, "catalog.json"), "w") as f:
-        json.dump(catalog, f, indent=2)
-    print(f"make_stac: wrote {item_path} and {out_dir}/catalog.json")
-    print(f"make_stac: asset base: {asset_base or '(none, relative hrefs)'}")
+    item = build_item(args.out_dir, args.asset_base)
+    catalog = write_catalog(item, args.out_dir)
+    print(f"make_stac: wrote {item.self_href} and {catalog.self_href}")
+    print("make_stac: asset base: "
+          f"{args.asset_base or '(none, relative hrefs)'}")
 
 
 if __name__ == "__main__":

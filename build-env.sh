@@ -11,4 +11,5 @@ set -euo pipefail
 test -x /usr/local/bin/run_mocca.sh
 test -x /opt/spss/src/pge_wrapper/utils/bin/getBuildId
 /opt/spss/src/pge_wrapper/utils/bin/getBuildId ''
+/opt/stac-env/bin/python -c 'import pystac, h5py'
 echo "Build environment check complete."
