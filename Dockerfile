@@ -4,12 +4,13 @@
 # the run command /app/mocca-pge/run_mocca.sh, so this image adds the
 # repository at that path.
 #
-#   docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=v29601 \
-#       -t anaerobia/mocca:v29601-maap --push .
+#   docker buildx build --platform linux/amd64 --build-arg MOCCA_TAG=spss261104 \
+#       -t anaerobia/mocca:spss261104-maap --push .
 #
-# MOCCA_TAG selects the base image: v295 (SPSS v02.95.00), v296
-# (SPSS v02.96.00) or v29601 (SPSS v02.96.01).
-ARG MOCCA_TAG=v29601
+# MOCCA_TAG selects the base image: spss<YYMMDD> (SPSS development build,
+# for example spss261104), v29601 (SPSS v02.96.01), v296 (SPSS v02.96.00)
+# or v295 (SPSS v02.95.00).
+ARG MOCCA_TAG=spss261104
 FROM docker.io/anaerobia/mocca:${MOCCA_TAG}
 
 # make_stac.py needs pystac. The PGE's Python (3.6) is too old for it and

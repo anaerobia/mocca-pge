@@ -1,7 +1,7 @@
 # mocca-pge
 
-MAAP DPS algorithm for the AIRS L2 MOCCA PGE (SPSS v02.96.01, v02.96.00
-and v02.95.00). MOCCA
+MAAP DPS algorithm for the AIRS L2 MOCCA PGE (SPSS development builds,
+v02.96.01, v02.96.00 and v02.95.00). MOCCA
 aggregates MODIS MYD03 and MYD06 cloud fields onto the AIRS L1B footprints.
 
 The PGE, its Python environment and its static files are in the container
@@ -11,7 +11,8 @@ commands, and a Dockerfile that adds this repository to that image at
 
 | SPSS | Base image | MAAP image | Registration | MAAP process |
 |---|---|---|---|---|
-| v02.96.01 | `anaerobia/mocca:v29601` | `anaerobia/mocca:v29601-maap` | `algorithm.json` (`mocca-v29601`) | |
+| development, 2026-11-04 (`425c2eecc`) | `anaerobia/mocca:spss261104` | `anaerobia/mocca:spss261104-maap` | `algorithm.json` (`mocca-spss261104`) | |
+| v02.96.01 | `anaerobia/mocca:v29601` | `anaerobia/mocca:v29601-maap` | `algorithm-v29601.json` (`mocca-v29601`) | |
 | v02.96.00 | `anaerobia/mocca:v296` | `anaerobia/mocca:v296-maap` | `algorithm-v296.json` (`mocca-v296`) | 197 |
 | v02.95.00 | `anaerobia/mocca:v295` | `anaerobia/mocca:v295-maap` | `algorithm-v295.json` (`mocca-v295`) | 164 |
 
@@ -19,14 +20,16 @@ Build the `-maap` image on `sleet2`, after the base image is built and
 tested there:
 
 ```bash
-docker build --platform linux/amd64 --build-arg MOCCA_TAG=v29601 \
-    -t anaerobia/mocca:v29601-maap .
-docker push anaerobia/mocca:v29601-maap
+docker build --platform linux/amd64 --build-arg MOCCA_TAG=spss261104 \
+    -t anaerobia/mocca:spss261104-maap .
+docker push anaerobia/mocca:spss261104-maap
 ```
 
 The full release procedure (build, tests, the two pushes, registration and
 the first job) is section 7 of `src/sips_pge/l2_mocca/docker/RUNBOOK.md` in
-`SIPS/MOCCA-v29601`. **After each change to the base image, rebuild and push
+SIPS/SPSS (branch `development`). The base image tag names the build, for
+example `spss261104` (SPSS development, 2026-11-04). Only `mocca-spss261104`
+and later registrations write STAC metadata. **After each change to the base image, rebuild and push
 the `-maap` image, then register again.** If you do not, MAAP runs the old
 code.
 
@@ -37,7 +40,7 @@ code.
 | Repository URL | `https://github.com/anaerobia/mocca-pge` |
 | Run Command | `mocca-pge/run_mocca.sh` |
 | Build Command | `mocca-pge/build-env.sh` |
-| Container | `docker.io/anaerobia/mocca:v29601-maap` (older: `...:v296-maap`, `...:v295-maap`) |
+| Container | `docker.io/anaerobia/mocca:spss261104-maap` (older: `...:v29601-maap`, `...:v296-maap`, `...:v295-maap`) |
 
 To register, send `algorithm.json` to the MAAP build API from a MAAP
 Jupyter notebook:
@@ -62,12 +65,12 @@ All inputs are strings.
 | `l1b_file` | yes | AIRS L1B radiance granule (HDF) |
 | `modis03_file_1`, `modis03_file_2` | yes | MODIS MYD03 geolocation granules |
 | `modis06_file_1`, `modis06_file_2` | yes | MODIS MYD06_L2 cloud granules |
-| `modis03_file_3` | no | Third MYD03 granule (mocca-v29601 only) |
-| `modis06_file_3` | no | Third MYD06_L2 granule (mocca-v29601 only) |
+| `modis03_file_3` | no | Third MYD03 granule (mocca-v29601 and later) |
+| `modis06_file_3` | no | Third MYD06_L2 granule (mocca-v29601 and later) |
 | `log_filename` | no | Log file name. A relative name goes in `./output`. |
 
 The third MODIS granule (`modis03_file_3`, `modis06_file_3`) is optional in
-`mocca-v29601` (type `Directory?`). The older registrations (`mocca-v296`,
+`mocca-v29601` and later (type `Directory?`). The older registrations (`mocca-v296`,
 `mocca-v295`) take exactly two granules of each type.
 
 Note: earlier, the MAAP DPS input stager failed when an optional
@@ -95,7 +98,7 @@ output/catalog.json
 output/<ProductName without .nc>/<ProductName without .nc>.json   # STAC Item
 ```
 
-In `mocca-v29601`, the product and the `.cas` file have the `ProductName` in
+In `mocca-v29601` and later, the product and the `.cas` file have the `ProductName` in
 the `.cas` file, for example:
 
 - `AIRS.AQUA.MODIS.20260104T1441.m06.g147.L2_MOCCA.std.v02_95_00.J.261027184906.nc`
@@ -152,6 +155,7 @@ To see every key in the `.cas` file and every NetCDF global attribute:
 
 ## Source
 
-The PGE source and the container build files are in the SIPS repository
-`SIPS/MOCCA-v29601`, `SIPS/MOCCA-v296` and `SIPS/MOCCA-v295`
-(`src/sips_pge/l2_mocca/docker`).
+The PGE source and the container build files are in `SIPS/SPSS`, branch
+`development` (`src/sips_pge/l2_mocca/docker`). The older images came from
+the release repositories `SIPS/MOCCA-v29601`, `SIPS/MOCCA-v296` and
+`SIPS/MOCCA-v295`.
