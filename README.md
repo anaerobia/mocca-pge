@@ -87,7 +87,13 @@ file in it. An empty input (`""`) is the same as no input.
 
 ## Outputs
 
-`./output` contains the product, its `.cas` metadata file and the log.
+`./output` contains the product, its `.cas` metadata file, the log, and the
+STAC metadata:
+
+```
+output/catalog.json
+output/<ProductName without .nc>/<ProductName without .nc>.json   # STAC Item
+```
 
 In `mocca-v29601`, the product and the `.cas` file have the `ProductName` in
 the `.cas` file, for example:
@@ -98,7 +104,51 @@ the `.cas` file, for example:
 The PGE writes `SNDR.AQUA.MOCCA.101.nc` (`L2OutputFile` in the config). After
 a successful run, the image entrypoint renames the two files. If the PGE
 fails, the files keep their names. The older registrations (`mocca-v296`,
-`mocca-v295`) do not rename the files.
+`mocca-v295`) do not rename the files. The STAC Item takes its id from
+`ProductName`, so the id is the same under all three registrations; only the
+asset hrefs follow the file names on disk.
+
+`make_stac.py` writes the STAC files with
+[pystac](https://pystac.readthedocs.io/) after a successful PGE run. The
+PGE's Python is too old for pystac, so the image has a separate environment,
+`/opt/stac-env` (pystac 1.10.1, which writes STAC 1.0.0, and h5py), and
+`run_mocca.sh` runs the script with it. It reads
+the start and end times, the product name, `BuildId`, `ProcessingLevel` and
+the granule fields from the `.cas` file. The `.cas` file has no bounding
+coordinates, so the footprint comes from the latitude and longitude
+variables in the NetCDF product (read with `h5py`). Granules that cross the
+antimeridian get a MultiPolygon. Internal keys such as `FileLocation`,
+`NodeInfo` and `JobId` are not copied into the STAC Item.
+
+The STAC collection ID is the product's short name, read from the NetCDF
+global attribute `shortname` (or `ShortName`, `short_name`). It is the same
+short name the product will have in CMR. Set `MOCCA_COLLECTION` to use a
+different ID. If no short name is found, the item has no collection and the
+script prints a warning.
+
+MAAP requires absolute asset hrefs. Give the archive location of the
+product files with `--asset-base` or the `MOCCA_ASSET_BASE` environment
+variable; each asset href is that location plus the file name:
+
+```bash
+/opt/stac-env/bin/python make_stac.py --asset-base=s3://<bucket>/<prefix> output
+```
+
+Without it, the hrefs are relative to the item file and the script prints a
+warning. `created_datetime` comes from `ProductionDateTime` in the `.cas`
+file.
+
+When the DPS job context is in the folder (`<dataset>.context.json`, which
+DPS uploads with the outputs, or `../_context.json` inside a running job),
+the item also gets a `derived_from` link to the STAC item of each input
+granule (L1B, MYD03, MYD06) and `mocca:container_image`, the PGE image the
+job ran. The config file input is not linked, because it is an internal path.
+
+To see every key in the `.cas` file and every NetCDF global attribute:
+
+```bash
+/opt/stac-env/bin/python make_stac.py --dump output
+```
 
 ## Source
 
