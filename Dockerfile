@@ -24,3 +24,9 @@ RUN dnf -y install python3.11 \
 
 COPY . /app/mocca-pge/
 RUN chmod +x /app/mocca-pge/run_mocca.sh /app/mocca-pge/build-env.sh
+
+# DPS runs "docker run <image> mocca-pge/run_mocca.sh <args>". With the base
+# image's ENTRYPOINT (/usr/local/bin/run_mocca.sh) that skips this
+# repository's run_mocca.sh, and with it the STAC step. Make the wrapper
+# the entrypoint; it calls the base entrypoint itself.
+ENTRYPOINT ["/app/mocca-pge/run_mocca.sh"]
