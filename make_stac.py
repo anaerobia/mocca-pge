@@ -221,15 +221,15 @@ LON_NAMES = ["longitude", "lon", "Longitude"]
 # docstring.
 SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 # Copied verbatim into item properties as "mocca:<key>" when present; a key
-# missing from the metadata is skipped. Keys that already fill a standard
-# STAC field are not repeated here: BuildId (processing:software),
-# StartDateTime and EndDateTime (start_datetime, end_datetime),
-# ProcessingLevel (processing:level) and ProductName (id). Internal keys
-# (FileLocation, NodeInfo, JobId, TaskId, RequestId) are left out on
-# purpose: they name internal hosts and paths.
-EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "Collection", "CollectionLabel",
-              "DataGroup", "DataProvider", "DataVersion", "Filename",
-              "GranuleNumber", "NominalDate", "ProductType",
+# missing from the metadata is skipped. Some (BuildId, StartDateTime,
+# EndDateTime, ProcessingLevel, ProductName) also fill standard STAC fields
+# above; these keep the raw .cas value too. Internal keys (FileLocation,
+# NodeInfo, JobId, TaskId, RequestId) are left out on purpose: they name
+# internal hosts and paths.
+EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "BuildId", "Collection",
+              "CollectionLabel", "DataGroup", "DataProvider", "DataVersion",
+              "StartDateTime", "EndDateTime", "Filename", "GranuleNumber",
+              "NominalDate", "ProcessingLevel", "ProductName", "ProductType",
               "ProductionDateTime", "AutomaticQualityFlag",
               "ProductionLocation"]
 
