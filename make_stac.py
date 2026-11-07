@@ -227,7 +227,8 @@ SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 # NodeInfo, JobId, TaskId, RequestId) are left out on purpose: they name
 # internal hosts and paths.
 EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "BuildId", "Collection",
-              "CollectionLabel", "DataGroup", "DataProvider", "DataVersion",
+              "SubCollection", "CollectionLabel", "DataGroup",
+              "DataProvider", "DataVersion",
               "StartDateTime", "EndDateTime", "Filename", "GranuleNumber",
               "NominalDate", "ProcessingLevel", "ProductName", "ProductType",
               "ProductionDateTime", "AutomaticQualityFlag",
