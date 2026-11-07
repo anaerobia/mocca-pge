@@ -220,12 +220,18 @@ LON_NAMES = ["longitude", "lon", "Longitude"]
 # file has none, so MOCCA_COLLECTION is the fallback; see the module
 # docstring.
 SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
-# Copied into item properties as "mocca:<key>" when present. Internal keys
-# (FileLocation, NodeInfo, JobId, TaskId, RequestId) are left out on
-# purpose: they name internal hosts and paths.
-EXTRA_KEYS = ["GranuleNumber", "NominalDate", "ProductType", "DataVersion",
-              "CollectionLabel", "AutomaticQualityFlag",
-              "ProductionDateTime", "ProductionLocation"]
+# Copied verbatim into item properties as "mocca:<key>" when present; a key
+# missing from the metadata is skipped. Some (BuildId, StartDateTime,
+# EndDateTime, ProcessingLevel, ProductName) also fill standard STAC fields
+# above; these keep the raw .cas value too. Internal keys (FileLocation,
+# NodeInfo, JobId, TaskId, RequestId) are left out on purpose: they name
+# internal hosts and paths.
+EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "BuildId", "Collection",
+              "CollectionLabel", "DataGroup", "DataProvider", "DataVersion",
+              "StartDateTime", "EndDateTime", "Filename", "GranuleNumber",
+              "NominalDate", "ProcessingLevel", "ProductName", "ProductType",
+              "ProductionDateTime", "AutomaticQualityFlag",
+              "ProductionLocation"]
 
 Meta = dict[str, Any]
 BBox = tuple[float, float, float, float]
