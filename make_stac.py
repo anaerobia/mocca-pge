@@ -130,6 +130,10 @@ footprint() turns those four numbers into geometry:
 In both cases bbox stays [west, south, east, north], with west > east for a
 crossing granule, which is the GeoJSON convention.
 
+A granule whose north edge is 90 or whose south edge is -90 contains a
+pole, and a box around a pole covers every longitude. footprint() then sets
+west to -180 and east to 180, whatever the longitudes say.
+
 Both routes give an axis-aligned rectangle, which over-covers a tilted AIRS
 swath. That matches the upstream product: CMR's record for the parent AIRS
 L1B granule (AIRIBRAD v005) publishes a BoundingRectangle and no polygon,
@@ -469,7 +473,8 @@ def footprint(w: float, s: float, e: float,
     ring. A crossing box (west > east) is split at 180 degrees into a
     west-to-180 ring and a -180-to-east ring, returned as a MultiPolygon,
     because a single ring drawn from west to east would wrap the long way
-    around the globe.
+    around the globe. A box that reaches latitude 90 or -90 contains a pole,
+    so it covers every longitude: west and east become -180 and 180.
 
     Args:
         w: West longitude in degrees; may exceed e for a crossing box.
@@ -483,6 +488,8 @@ def footprint(w: float, s: float, e: float,
         keeps west > east for a crossing box, as GeoJSON prescribes.
     """
     w, s, e, n = (float(x) for x in (w, s, e, n))
+    if n >= 90.0 or s <= -90.0:          # contains a pole: all longitudes
+        w, e = -180.0, 180.0
     bbox = [w, s, e, n]
     if w <= e:
         ring = [[w, s], [e, s], [e, n], [w, n], [w, s]]
