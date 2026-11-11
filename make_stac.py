@@ -230,7 +230,8 @@ SHORTNAME_KEYS = ["shortname", "ShortName", "short_name", "SHORTNAME"]
 # above; these keep the raw .cas value too. Internal keys (FileLocation,
 # NodeInfo, JobId, TaskId, RequestId) are left out on purpose: they name
 # internal hosts and paths.
-EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "BuildId", "Collection",
+EXTRA_KEYS = ["MAAPBatchTag", "MAAPQueue", "MAAPProcessId",
+              "MAAPManagerUser", "MAAPManagerJobIndex", "BuildId", "Collection",
               "SubCollection", "CollectionLabel", "DataGroup",
               "DataProvider", "DataVersion",
               "StartDateTime", "EndDateTime", "Filename", "GranuleNumber",
